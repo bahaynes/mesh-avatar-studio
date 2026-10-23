@@ -125,8 +125,9 @@ main:has(.project-location):has(.stale) .editor-panel { height: calc(100dvh - 21
 .right-column { display: flex; flex-direction: column; gap: 12px; min-height: 0; }
 .preview-panel { overflow: hidden; flex-shrink: 0; }
 .preview-canvas { display: block; height: 420px; width: auto; max-width: 100%; margin: 0 auto; }
-.preview-tools { display: flex; align-items: center; gap: 8px; padding: 2px 16px; border-top: 1px solid var(--line); font-size: 12px; }
+.preview-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 2px 16px; border-top: 1px solid var(--line); font-size: 12px; }
 .preview-tools .icon-button { width: 28px; height: 28px; border: 0; color: var(--accent); }
+.preview-tools label { display: inline-flex; align-items: center; gap: 4px; margin-left: auto; }
 .pose-test { position: relative; padding: 8px 16px; }
 .pose-actions { display: flex; gap: 8px; }
 .reset-pose { color: var(--accent); padding: 6px 8px; font-size: 12px; }

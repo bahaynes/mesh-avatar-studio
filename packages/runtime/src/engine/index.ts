@@ -14,6 +14,8 @@ export interface MeshAvatarOptions {
   assetsBase?: string;
   assets?: Record<string, string>;
   manual?: boolean;
+  /** Optional coupled gaze, head, body and speech motion. Defaults to 'classic'. */
+  motionStyle?: 'classic' | 'lively';
   padTop?: number;
   padSide?: number;
   fit?: 'contain' | 'cover';
@@ -46,6 +48,8 @@ export interface MeshAvatar {
   getLipSyncState(): { active: boolean; open: number; form: number };
   setAutoIdle(on: boolean): void;
   setAutoMotion(on: boolean): void;
+  /** Blend motion style over 0.3 seconds; explicit manual poses are unaffected. */
+  setMotionStyle(style: 'classic' | 'lively'): void;
   setSwayGain(gain: number): void;
   /** Override garment physics without rebuilding layers; null applies to every garment. */
   setClothTuning(name: string | null, tuning: Partial<ClothTuning>): void;

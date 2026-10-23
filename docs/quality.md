@@ -5,6 +5,7 @@ Run locally with Node.js 22.17+ after `npm ci`:
 ```sh
 npm run quality -- samples/miko-qipao
 npm run quality -- projects/example --seconds 60 --seed 173 --out work/quality/example
+npm run quality -- samples/miko-qipao --motion-style lively --out work/quality/lively
 ```
 
 The command runs without a browser and writes `report.json` plus console summary tables.
@@ -49,6 +50,7 @@ combinations, including hidden eye parts, so it is not a count of unique triangl
 ## Temporal motion
 
 Each scenario starts fresh, uses the same seeded random generator, and advances at 60 fps
+with `--motion-style classic|lively` (default `classic`, recorded as `motionStyle`)
 for `--seconds` (default 30, rounded to whole frames, minimum 3 frames). The scenarios are
 idle wandering with automatic idle motions, every motion ID in sequence, a fixed looping
 kana sentence, and six emotion tags. Automatic reaction playback is disabled; only the

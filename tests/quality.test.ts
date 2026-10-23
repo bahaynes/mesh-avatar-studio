@@ -71,6 +71,12 @@ test('headless CLI is reproducible without images and guards paths before writin
     const reportText = readFileSync(resolve(first, 'report.json'), 'utf8');
     expect(reportText).toBe(readFileSync(resolve(second, 'report.json'), 'utf8'));
     const report = JSON.parse(reportText);
+    expect(report.motionStyle).toBe('classic');
+    run([project, '--out', second, '--motion-style', 'lively', '--seconds', '1']);
+    const lively = readFileSync(resolve(second, 'report.json'), 'utf8');
+    expect(JSON.parse(lively).motionStyle).toBe('lively');
+    run([project, '--out', second, '--motion-style', 'lively', '--seconds', '1']);
+    expect(readFileSync(resolve(second, 'report.json'), 'utf8')).toBe(lively);
     expect(report.temporal.map((s: { scenario: string }) => s.scenario)).toEqual(['idle', 'motions', 'speech', 'emotions']);
     expect(report.temporal[0].frames).toBe(1800);
     expect(report.temporal[0].vertexJitter.hair.samples).toBe(0);
@@ -91,7 +97,8 @@ test('headless CLI is reproducible without images and guards paths before writin
       [project, '--out', 'samples/miko-qipao'], [project, '--out', 'reference'], [project, '--out', 'projects/another/built'],
       [project, '--out', first],
       [project, '--out', resolve(project, 'built/new')], [project, '--out', resolve(folder, 'sample-output/new')],
-      [project, '--seconds', 'NaN'], [project, '--seed', '-1'], [project, '--unknown', '1']];
+      [project, '--seconds', 'NaN'], [project, '--seed', '-1'], [project, '--unknown', '1'],
+      [project, '--motion-style', 'unknown']];
     for (const args of invalidArgs) {
       const result = spawnSync(process.execPath, ['--experimental-strip-types', 'tools/quality.mjs', ...args], { encoding: 'utf8' });
       expect(result.status, args.join(' ')).toBe(1);

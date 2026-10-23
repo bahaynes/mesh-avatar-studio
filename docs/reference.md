@@ -422,6 +422,23 @@ upgrading it.
 - **The stream view stays idle**: keep the Live page open and running, and make sure both pages
   use the same `project`.
 
+## Runtime API: motion style
+
+`createMeshAvatar(canvas, { rig, assetsBase, motionStyle: 'lively' })` opts into fast
+gaze shifts, a head that follows the eyes, slower body following, occasional blinks on
+large gaze changes, and small speech nods. Omitting `motionStyle`, or setting it to
+`'classic'`, keeps the existing motion. No additional rig fields or sprites are needed.
+
+Call `avatar.setMotionStyle('lively')` or `avatar.setMotionStyle('classic')` to change
+style with a 0.3 second blend. `setTalkGain()` scales speech nods, brow lifts and the
+extra breath after a line. Both audio syllable detection and `speakKana()` drive nods;
+a held mouth shape does not. Explicit manual poses in the motion controller are unaffected.
+The `manual: true` creation option disables the animation loop and still supports lively
+motion when driven with `advance()`.
+
+The studio preview's **Lively motion** checkbox sits beside **Idle motion** and saves its
+setting in this browser. Element and React wrappers do not expose a motion-style setting.
+
 ## Verify
 
 For headless deformation statistics and seeded motion comparisons, see

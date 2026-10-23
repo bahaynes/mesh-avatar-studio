@@ -7,6 +7,7 @@ import { VOWELS, skippedKanaCharacters } from '../../packages/runtime/src/engine
 import { useI18n } from './i18n';
 import { Icon } from './Icon';
 import { openSampleAvatar } from './project';
+import { readPreference, savePreference } from './preferences';
 
 const defaults: Record<string, number> = Object.fromEntries(PARAMS.map(p => [p.id, p.def]));
 const sliders = [
@@ -35,6 +36,7 @@ export function Preview({ projectKey, rig, assets, lipSync, onLipSyncChange, has
   const [status, setStatus] = useState<'loading' | 'updating' | 'ready' | 'previewError'>('loading');
   const [revision, setRevision] = useState(0);
   const [idle, setIdle] = useState(true);
+  const [lively, setLively] = useState(() => readPreference('mesh-avatar:lively-motion') === 'true');
   const [stress, setStress] = useState(false);
   const [parameters, setParameters] = useState<Record<string, number>>({});
   const [audioActive, setAudioActive] = useState(false);
@@ -60,21 +62,23 @@ export function Preview({ projectKey, rig, assets, lipSync, onLipSyncChange, has
   }, [assets]);
   useEffect(() => { avatar.current?.setOverlays(shownOverlays); avatar.current?.advance(0); setRevision(current => current + 1); }, [shownOverlays]);
   const skipped = skippedKanaCharacters(text).join(' ');
-  const controls = useRef({ idle, stress, parameters });
-  controls.current = { idle, stress, parameters };
+  const controls = useRef({ idle, stress, parameters, lively });
+  controls.current = { idle, stress, parameters, lively };
   useEffect(() => {
     let cancelled = false;
     let instance: MeshAvatar | undefined;
     setStatus('updating');
     const timer = setTimeout(() => {
       Promise.resolve(assets ?? openSampleAvatar().then(value => value.assets))
-        .then(loadedAssets => createMeshAvatar(canvas.current!, { rig, assets: loadedAssets, manual: true })).then(value => {
+        .then(loadedAssets => createMeshAvatar(canvas.current!, { rig, assets: loadedAssets, manual: true,
+          motionStyle: controls.current.lively ? 'lively' : 'classic' })).then(value => {
         if (cancelled) { value.destroy(); return; }
         instance = value;
         avatar.current = value;
         value.setLighting(lightRef.current);
         value.setOverlays(shownRef.current);
         const control = controls.current;
+        value.setMotionStyle(control.lively ? 'lively' : 'classic');
         value.setAutoIdle(control.idle && !control.stress);
         value.setAutoMotion(control.idle && !control.stress);
         value.setParameters(control.idle && !control.stress ? control.parameters : { ...defaults, ...control.parameters });
@@ -91,6 +95,10 @@ export function Preview({ projectKey, rig, assets, lipSync, onLipSyncChange, has
       if (avatar.current === instance) avatar.current = null;
     };
   }, [rig, idle, stress, assets]);
+  useEffect(() => {
+    savePreference('mesh-avatar:lively-motion', String(lively));
+    avatar.current?.setMotionStyle(lively ? 'lively' : 'classic');
+  }, [lively]);
   useEffect(() => {
     const value = avatar.current;
     if (!value) return;
@@ -141,6 +149,8 @@ export function Preview({ projectKey, rig, assets, lipSync, onLipSyncChange, has
       <div className="preview-tools" hidden={tab === 'lip'}>
         <button className="icon-button" aria-label={idle ? t.pause : t.play} title={idle ? t.pause : t.play}
           data-testid={tab === 'pose' ? 'idle-toggle' : undefined} aria-pressed={idle} onClick={() => setIdle(current => !current)}><Icon name={idle ? 'pause' : 'play'} /></button><span>{t.idle}</span>
+        <label><input type="checkbox" data-testid="lively-toggle" checked={lively}
+          onChange={event => setLively(event.target.checked)} />{t.livelyMotion}</label>
       </div>
       {overlayNames.length > 0 && <div className="overlay-tools" role="group" aria-label={t.overlays} data-testid="overlay-tools">
         <span>{t.overlays}</span>

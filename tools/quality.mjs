@@ -149,11 +149,11 @@ function staticReport(rig, engine, loaded) {
   return result;
 }
 
-function temporalReport(name, rig, engine, gridItem, seconds, seed) {
+function temporalReport(name, rig, engine, gridItem, seconds, seed, motionStyle) {
   const originalRandom = Math.random;
   Math.random = seededRandom(seed);
   try {
-    const scenario = createScenario(name, rig, engine, seconds), duration = scenario.frames / 60;
+    const scenario = createScenario(name, rig, engine, seconds, motionStyle), duration = scenario.frames / 60;
     const tracks = {}, tassels = scenario.physics.chains.map(() => [[], []]);
     const histograms = () => Object.fromEntries(['head', 'hair', 'body'].map(key => [key, new JitterHistogram()]));
     const jitter = histograms(), jitterExcludingEvents = histograms(), radiusFrames = 3;
@@ -220,23 +220,25 @@ function temporalReport(name, rig, engine, gridItem, seconds, seed) {
 }
 
 async function main() {
-  const args = process.argv.slice(2), usage = 'Usage: npm run quality -- <project> [--out <dir>] [--seconds N] [--seed N]';
+  const args = process.argv.slice(2), usage = 'Usage: npm run quality -- <project> [--out <dir>] [--seconds N] [--seed N] [--motion-style classic|lively]';
   if (args.includes('--help')) { console.log(usage); return; }
   if (!args.length || args[0].startsWith('--')) throw new Error(usage);
   const project = await realpath(resolve(args.shift()));
   if (!inside(root, project)) throw new Error('Project must stay inside the repository');
-  let seconds = 30, seed = 1, output = resolve(root, 'work/quality', basename(project));
+  let seconds = 30, seed = 1, motionStyle = 'classic', output = resolve(root, 'work/quality', basename(project));
   const seen = new Set();
   while (args.length) {
     const flag = args.shift(), value = args.shift();
-    if (!['--out', '--seconds', '--seed'].includes(flag) || value === undefined || seen.has(flag)) throw new Error(usage);
+    if (!['--out', '--seconds', '--seed', '--motion-style'].includes(flag) || value === undefined || seen.has(flag)) throw new Error(usage);
     seen.add(flag);
     if (flag === '--out') output = resolve(value);
     if (flag === '--seconds') seconds = Number(value);
     if (flag === '--seed') seed = Number(value);
+    if (flag === '--motion-style') motionStyle = value;
   }
   if (!Number.isFinite(seconds) || seconds < 0.05 || seconds > 3600) throw new Error('Seconds must be between 0.05 and 3600');
   if (!Number.isInteger(seed) || seed < 0 || seed > 0xffffffff) throw new Error('Seed must be a uint32');
+  if (!['classic', 'lively'].includes(motionStyle)) throw new Error('Motion style must be classic or lively');
   output = await canonical(output);
   const protectedPaths = [resolve(root, 'samples'), resolve(root, 'reference'), resolve(root, 'projects'), resolve(project, 'built'), project];
   // Output is scratch data, never mixed into any source project or runtime assets.
@@ -248,10 +250,10 @@ async function main() {
   const rig = JSON.parse(await projectFile(project, 'rig.json')), errors = validateRig(rig);
   if (errors.length) throw new Error(errors.join('\n'));
   const engine = createRig(rig), notices = [], loaded = await loadMeshes(project, rig, engine, notices);
-  const report = { version: 1, project: relative(root, project).split(sep).join('/'), seed, fps: 60, seconds,
+  const report = { version: 1, project: relative(root, project).split(sep).join('/'), seed, fps: 60, seconds, motionStyle,
     gridCell: 7, hairMask: loaded.hairMask, jitterQuantileRelativeError: 0.001, notices,
     static: staticReport(rig, engine, loaded),
-    temporal: SCENARIOS.map(name => temporalReport(name, rig, engine, loaded.items[0], seconds, seed)) };
+    temporal: SCENARIOS.map(name => temporalReport(name, rig, engine, loaded.items[0], seconds, seed, motionStyle)) };
   await mkdir(output, { recursive: true });
   await writeFile(resolve(output, 'report.json'), JSON.stringify(report, (_key, value) => typeof value === 'number' && !Number.isFinite(value) ? String(value) : value, 2) + '\n');
   notices.forEach(notice => console.log(notice));

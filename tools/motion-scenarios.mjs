@@ -17,9 +17,9 @@ export function seededRandom(seed) {
   };
 }
 
-export function createScenario(name, rig, engine, seconds) {
+export function createScenario(name, rig, engine, seconds, motionStyle = 'classic') {
   if (!SCENARIOS.includes(name)) throw new Error(`Unknown scenario: ${name}`);
-  const motion = new Motion(rig.view.gazeCenter ?? [rig.head.cx, rig.head.cy]);
+  const motion = new Motion(rig.view.gazeCenter ?? [rig.head.cx, rig.head.cy], motionStyle);
   const { Physics } = createPhysics(engine, rig);
   const physics = new Physics();
   motion.autoMotion = false;
