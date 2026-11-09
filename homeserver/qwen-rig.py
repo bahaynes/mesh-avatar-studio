@@ -60,6 +60,36 @@ def clampbox(x0, y0, x1, y1, w, h):
     return max(0, x0), max(0, y0), min(w, x1), min(h, y1)
 
 
+def fix_strands(proj, strands, face_cx, skins, hair_w):
+    """Code-side cleanup of Qwen's locks: nodes on skin move outward off it (skin sampled at the cheeks),
+    and sigma gets a floor so the locks on each side cover that side's hair width together. Writes
+    work/strands-overlay.png to check by eye: the hair mask is built from these strands, so it can't
+    be the check."""
+    from PIL import Image, ImageDraw
+    im = Image.open(proj / "source.png").convert("RGB")
+    w, h = im.size
+    px = [im.getpixel((int(x), int(y))) for x, y in skins]
+    skin = [sum(c) / len(px) for c in zip(*px)]
+    is_skin = lambda x, y: 0 <= x < w and 0 <= y < h and sum(abs(c - k) for c, k in zip(im.getpixel((int(x), int(y))), skin)) < 60
+    left = {True: 0, False: 0}
+    for t in strands:
+        left[t["nodes"][-1][0] < face_cx] += 1
+    for t in strands:
+        side = t["nodes"][-1][0] < face_cx
+        out = -1 if side else 1
+        for p in t["nodes"]:
+            for _ in range(40):  # up to 120 px outward
+                if not is_skin(*p):
+                    break
+                p[0] += 3 * out
+        t["sigma"] = max(t["sigma"], round(hair_w[side] / (2 * left[side])))
+    d = ImageDraw.Draw(im)
+    for t in strands:
+        d.line([tuple(p) for p in t["nodes"]], fill=(255, 0, 0), width=max(2, t["sigma"] // 2))
+    im.save(proj / "work" / "strands-overlay.png")
+    return strands
+
+
 def main():
     proj = Path(sys.argv[1])
     (proj / "work").mkdir(exist_ok=True)
@@ -72,6 +102,7 @@ def main():
     raw = ask(img, f"""This is a character portrait.
 Read these points as [x, y] on a 0-1000 scale relative to the image (0,0 top-left, 1000,1000 bottom-right). "Left" and "right" mean the image's left and right.
 {{"hair_box": [x0, y0, x1, y1]  (bounding box of all hair and head accessories, excluding hair below the shoulders),
+ "hair_bottom_y": y (lowest visible hair, including hair hanging below the shoulders),
  "chin": [x, y], "nose_tip": [x, y], "neck": [x, y] (centre of the neck, halfway between chin and collarbone),
  "collarbone_y": y, "shoulder_left": [x, y], "shoulder_right": [x, y] (top of each shoulder),
  "eye_left": [x0, y0, x1, y1], "eye_right": [x0, y0, x1, y1] (box around each eye including lashes),
@@ -129,15 +160,18 @@ Read the closed mouth line (where the lips meet): "left_corner" and "right_corne
     angle = math.atan2(rc[1] - lc[1], rc[0] - lc[0])
 
     # 4. Hair strands off a 20 px grid of the hair box.
-    region = clampbox(hx0 - 10, hy0 - 10, hx1 + 10, max(hy1, chin[1]) + 10, W, H)
+    # down to the lowest hair, so locks can be traced to their tips (Cordelia's stopped at the jaw)
+    region = clampbox(hx0 - 10, hy0 - 10, hx1 + 10, max(hy1, chin[1], s.get("hair_bottom_y", 0)) + 10, W, H)
     img, (cw, ch), back = crop(proj, "crop-hair.png", region, 1)
     st = ask(img, f"""This image shows a character's head and hair. Give positions as [x, y] on a 0-1000 scale relative to this image (0,0 top-left, 1000,1000 bottom-right).
 List the hair locks that should sway: 3 to 5 bang locks over the forehead if there are bangs, and 2 locks on each side of the face.
-For each, 4 [x, y] points from root to tip, every point on hair (not skin or background), and the lock's visible width on the same 0-1000 scale.
+For each, 4 [x, y] points from root to tip, every point on hair (not skin or background); the tip is where that hair ends, which may be far below the chin, and the lock's visible width on the same 0-1000 scale.
 {{"strands": [{{"name": "bang1", "nodes": [[x, y], [x, y], [x, y], [x, y]], "width": px}}, ...]}}""", proj / "work/qwen-strands.json")
     strands = [{"name": re.sub(r"[^A-Za-z0-9_-]", "_", t["name"])[:24] or f"lock{i}", "nodes": [P(back(p)) for p in t["nodes"]][:4],
                 "sigma": max(6, round(t.get("width", 30) / 1000 * (region[2] - region[0]) / 2)), "k": 1, "max": 9}
                for i, t in enumerate(st["strands"]) if len(t.get("nodes", [])) >= 4]
+    fix_strands(proj, strands, face_cx=(eLx + eRx) / 2, skins=[(eLx, nose[1]), (eRx, nose[1])],
+                hair_w={True: s["ear_left"][0] - hx0, False: hx1 - s["ear_right"][0]})
     seen = set()
     for t in strands:  # names must be distinct
         while t["name"] in seen:
