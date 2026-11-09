@@ -4,6 +4,7 @@ usage: uv run --with pillow homeserver/restyle.py <reference> <out-prefix> "<sub
   <subject>: who and what to draw, subject first (e.g. "Head-and-shoulders portrait of the woman in the
   reference image, facing the viewer, ..."). The style text and LoRA match Marinara's "Line Art" profile on
   the LocalComfy(FluxEdit) connection. Writes <out-prefix>-1.png ... for a person to pick from.
+APPEARANCE env: card appearance text, e.g. APPEARANCE="$(homeserver/card-appearance.sh marinara character <id>)".
 ponytail: homeserver-only; style text copied from the profile (STYLE env overrides it).
 """
 import io, json, os, sys, time, urllib.parse, urllib.request, uuid
@@ -70,7 +71,10 @@ def main():
     ref, prefix, subject = sys.argv[1], sys.argv[2], sys.argv[3]
     tries = int(sys.argv[4]) if len(sys.argv) > 4 else 3
     name = upload(Image.open(ref))
-    text = f"{subject} {STYLE} Plain light background, no text."
+    # APPEARANCE: the card's own description (homeserver/card-appearance.sh), so age, hair and build follow
+    # the card rather than the reference photo alone.
+    look = os.environ.get("APPEARANCE", "").strip()
+    text = f"{subject} {'Appearance: ' + look + ' ' if look else ''}{STYLE} Plain light background, no text."
     for t in range(tries):
         out = f"{prefix}-{t + 1}.png"
         open(out, "wb").write(run(workflow(name, text, 7000 + t)))
