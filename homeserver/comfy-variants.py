@@ -1,6 +1,6 @@
 """Draw mesh-avatar variants on a Flux.2 Klein ComfyUI: masked edit of source.png, pasted back over the source.
 
-usage: uv run --with pillow homeserver/comfy-variants.py projects/<name> [variant ...]
+usage: uv run --with pillow --with numpy homeserver/comfy-variants.py projects/<name> [variant ...]
 Reads projects/<name>/variant-requests/<v>/{mask.png,prompt.md}, writes projects/<name>/variants/<v>.png.
 ponytail: one-off tool for this machine's ComfyUI (COMFY env, default 10.10.10.114:8188); node names are
 the Klein stack from the Marinara FluxEdit connection. Upgrade path: tools/ if it proves general.
@@ -79,6 +79,28 @@ def run(wf) -> bytes:
     raise TimeoutError(pid)
 
 
+def match_tint(src, edit, mask_path, band=6):
+    """Remove Flux's uniform skin-colour drift: compare a band just inside the mask edge (still skin, should
+    match the source) and shift the whole edited area back by the mean difference."""
+    import numpy as np
+    from PIL import ImageFilter
+    region = Image.open(mask_path).getchannel("A").point(lambda a: 255 if a == 0 else 0)
+    inner = region.filter(ImageFilter.MinFilter(2 * band + 1))
+    r = np.asarray(region) > 0
+    ring = r & ~(np.asarray(inner) > 0)
+    a, b = np.asarray(src.convert("RGB"), float), np.asarray(edit.convert("RGB"), float)
+    delta = (b[ring] - a[ring]).mean(axis=0)
+    out = b.copy()
+    out[r] = np.clip(b[r] - delta, 0, 255)
+    # Feather: fade the edit into the source over the band inside the mask edge, so no seam (the visible
+    # oval) remains. Outside the mask stays identical to the source.
+    w = np.asarray(inner.filter(ImageFilter.GaussianBlur(band / 2)), float)[..., None] / 255 * r[..., None]
+    out = a * (1 - w) + out * w
+    fixed = Image.fromarray(out.astype("uint8"), "RGB")
+    fixed.putalpha(edit.getchannel("A"))
+    return fixed, delta
+
+
 def judge(qwen, proj, v, source, mask_path, tries, text):
     """Show Qwen the original next to each try (cropped to the mask) and let it pick one."""
     from PIL import ImageDraw
@@ -122,6 +144,9 @@ def main():
         for t in range(tries_n):
             rgb = Image.open(io.BytesIO(run(workflow(src_name, mask_name, text, *source.size, seed0 + 100 * i + t)))).convert("RGB")
             rgb.putalpha(source.getchannel("A"))  # Comfy drops alpha; the source's alpha is the right one
+            rgb, delta = match_tint(source, rgb, req / "mask.png")
+            if abs(delta).max() > 3:
+                print(f"  {v} try {t + 1}: removed tint {delta.round(1).tolist()}", flush=True)
             tries.append(rgb)
             (proj / "work" / "tries").mkdir(exist_ok=True)
             rgb.save(proj / "work" / "tries" / f"{v}-{t + 1}.png")

@@ -21,7 +21,7 @@ uv run --with pillow python homeserver/qwen-rig.py "$P"
 npm run -s validate-rig -- "$P/rig.draft.json"
 uv run --with numpy --with pillow --with opencv-python-headless tools/build-layers.py "$P" --rig rig.draft.json
 uv run tools/variant-requests.py "$P"
-uv run --with pillow python homeserver/comfy-variants.py "$P"
+uv run --with pillow --with numpy python homeserver/comfy-variants.py "$P"
 uv run tools/build-sprites.py "$P"
 docker run --rm --ipc=host -v "$PWD":/w -w /w mcr.microsoft.com/playwright:v1.63.0-noble npm run -s render-poses -- "$P"
 echo "done: open $name in Studio, fix the rig, check $P/work/judge-*.png, then import to Marinara"
