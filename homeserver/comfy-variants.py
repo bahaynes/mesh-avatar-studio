@@ -5,7 +5,7 @@ Reads projects/<name>/variant-requests/<v>/{mask.png,prompt.md}, writes projects
 ponytail: one-off tool for this machine's ComfyUI (COMFY env, default 10.10.10.114:8188); node names are
 the Klein stack from the Marinara FluxEdit connection. Upgrade path: tools/ if it proves general.
 """
-import io, json, os, sys, time, urllib.request, uuid
+import io, json, os, re, sys, time, urllib.request, uuid
 from pathlib import Path
 from PIL import Image
 
@@ -35,9 +35,9 @@ def instruction(prompt_md: str) -> str:
     # Flux doesn't know the Japanese vowel names; say the shape plainly.
     text = text.replace("the Japanese vowel あ (a) at half openness: a smaller, gently open mouth", "the lips slightly parted, a small gap between them")
     if "mouth" in text.lower() and "closed" not in text.lower():
-        text += " Draw full lips with the same lipstick colour, lip shape and shading as the reference; only the opening changes."
+        text += " Draw full lips with the same natural lip colour, lip shape and shading as the reference; add no lipstick or makeup; only the opening changes."
     elif "closed" in text.lower() and "mouth" in text.lower():
-        text += " Draw full, closed lips with the same lipstick colour, lip shape and shading as the reference; only the lip curve changes."
+        text += " Draw full, closed lips with the same natural lip colour, lip shape and shading as the reference; add no lipstick or makeup; only the lip curve changes."
     return text + " Keep the same iris colour, eyeliner, lashes, lip colour and line art as the reference image."
 
 
@@ -117,11 +117,19 @@ def judge(qwen, proj, v, source, mask_path, tries, text):
         sheet.paste(flat.convert("RGB").crop(box).resize((cw * scale, ch * scale)), (0, y + 30))
         ImageDraw.Draw(sheet).text((6, y + 6), "ORIGINAL" if i == 0 else f"TRY {i}", fill="black")
     path = proj / "work" / f"judge-{v}.png"; sheet.save(path)
-    a = qwen.ask(path, f"""The top panel is the ORIGINAL drawing. Each TRY panel is an edit that should do this: {text}
-Pick the try that best does what was asked while keeping the original's eye colour, makeup, lip colour and line style, with both eyes matching (no wink, no odd colours, no smears).
-{{"best": <try number>, "acceptable": true or false, "why": "<one sentence>"}}""", proj / "work" / f"qwen-judge-{v}.json")
+    try:
+        a = _judge_ask(qwen, path, text, proj, v)
+    except SystemExit as e:  # Qwen's pick is advisory: a malformed answer must not stop the run
+        m = re.search(r'"best"\s*:\s*(\d+)', str(e))
+        return (int(m.group(1)) if m else 1), False, "judge answer unreadable; check by eye"
     best = int(a.get("best", 1))
     return (best if 1 <= best <= len(tries) else 1), bool(a.get("acceptable", True)), a.get("why", "")
+
+
+def _judge_ask(qwen, path, text, proj, v):
+    return qwen.ask(path, f"""The top panel is the ORIGINAL drawing. Each TRY panel is an edit that should do this: {text}
+Pick the try that best does what was asked while keeping the original's eye colour, makeup, lip colour and line style, with both eyes matching (no wink, no odd colours, no smears).
+{{"best": <try number>, "acceptable": true or false, "why": "<one sentence>"}}""", proj / "work" / f"qwen-judge-{v}.json")
 
 
 def main():
@@ -140,6 +148,9 @@ def main():
         req = proj / "variant-requests" / v
         mask_name = upload(req / "mask.png", f"{proj.name}-{v}-mask.png")
         text = instruction((req / "prompt.md").read_text())
+        # Per-character eye look (e.g. unusual irises) for the open-eye variants only: EYES_EXTRA="...".
+        if v.startswith("eyes_") and v != "eyes_closed" and os.environ.get("EYES_EXTRA"):
+            text += " " + os.environ["EYES_EXTRA"]
         tries = []
         for t in range(tries_n):
             rgb = Image.open(io.BytesIO(run(workflow(src_name, mask_name, text, *source.size, seed0 + 100 * i + t)))).convert("RGB")
