@@ -32,6 +32,8 @@ the engine mapping. Do not copy the example illustration's coordinates into a ne
 | `head.maxRoll` | Roll magnitude at a ±30° head pose, radians; start near `0.15`. |
 | `head.weightBand` | Y range, px, where head influence fades from full to zero; below chin to collarbone. |
 | `head.turnBand` | Y range, px, where face-turn displacement fades; below chin into upper chest. |
+| `head.turnCore` | Optional. Upper edge of the turn-field ramp, default 0.84 (face inside r≈0.4 moves as one piece). Values above 1 make the centre lead and the contour lag, for more parallax; raise `shiftX` to keep centre travel. |
+| `head.featureDepth` | Optional. Multiplier on the per-feature turn offsets (nose, mouth, eyes, ears), default 1. Raise on large heads. |
 | `body.pivotX` | Body roll pivot x, px; middle of the lower torso. |
 | `body.pivotY` | Body roll pivot y, px; near the bottom of the image. |
 | `body.maxRoll` | Body rotation at a ±10° body pose, radians; start near `0.035`. |

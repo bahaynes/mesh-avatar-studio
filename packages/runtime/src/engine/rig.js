@@ -182,7 +182,7 @@ export function createRig(rig) {
     if (t <= 0) return [0, 0];
     // flat top over eyes/nose/mouth (r < ~0.4) so they move as one piece; all the
     // stretching needed for parallax happens on the cheeks, contour and hair
-    const d = sstep(0, 0.84, t);
+    const d = sstep(0, HEAD.turnCore ?? 0.84, t);
     return [ax * HEAD.shiftX * d, -ay * HEAD.shiftY * d];
   }
 
@@ -245,7 +245,8 @@ export function createRig(rig) {
     p[1] += P.mouthOpen * 3.5 * w.jaw;
     // head turn, per part: nose and mouth travel further than the eyes, the far eye
     // narrows and the near eye widens, the ears and buns slide the other way
-    const ax = P.angleX / 30, ay = P.angleY / 30;
+    const depth = HEAD.featureDepth ?? 1;
+    const ax = P.angleX / 30 * depth, ay = P.angleY / 30 * depth;
     p[0] += ax * (8 * w.nose + 5 * w.mouth) + (x - rig.face.eyeA.cx) * 0.12 * ax * w.eyeA - (x - rig.face.eyeB.cx) * 0.12 * ax * w.eyeB
       - ax * 9 * w.earR + ax * 4 * w.earL - ax * 10 * (w.bunL + w.bunR);
     p[1] -= ay * (6 * w.nose + 3 * w.mouth);

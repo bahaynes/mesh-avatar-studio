@@ -109,6 +109,10 @@ export interface Rig {
   head: Ellipse & {
     shiftX: number; shiftY: number; pivotX: number; pivotY: number;
     maxRoll: number; weightBand: Band; turnBand: Band;
+    /** Upper edge of the turn-field ramp (0..1, default 0.84: the face inside r ~0.4 moves as one piece). Raise towards 1 for more parallax. */
+    turnCore?: number;
+    /** Multiplier on the nose/mouth/eye/ear turn offsets (default 1). Raise on large heads. */
+    featureDepth?: number;
   };
   body: {
     pivotX: number; pivotY: number; maxRoll: number;
