@@ -250,6 +250,10 @@ main:has(.stale) .editor-panel, main:has(.stale) .parts-panel { height: calc(100
   main { padding: 8px; }
   .toolbar { align-items: flex-start; flex-wrap: wrap; margin-bottom: 8px; }
   .toolbar nav { flex-wrap: wrap; gap: 4px; }
+  /* the toolbar wraps, so a button's own edge can be anywhere: anchor both menus to the toolbar's left edge */
+  .toolbar { position: relative; }
+  .open-menu, .archive-menu { position: static; }
+  .project-menu, .archive-options { left: 0; right: auto; top: auto; margin-top: 8px; }
   .workspace { grid-template-columns: minmax(0, 1fr); }
   .parts-panel { max-height: 280px; }
   .editor-panel { height: 520px; }
