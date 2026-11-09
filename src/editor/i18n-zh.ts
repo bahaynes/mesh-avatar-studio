@@ -125,7 +125,7 @@ export const fieldsZh: Record<string, string> = {
   cx: '中心 X', cy: '中心 Y', shiftX: '横向位移', shiftY: '纵向位移',
   pivotX: '支点 X', pivotY: '支点 Y', maxRoll: '最大倾斜角度',
   weightBand: '头部影响范围', turnBand: '转头影响范围',
-  turnCore: '转头纵深衰减', featureDepth: '五官视差', breathBand: '呼吸影响范围',
+  turnCore: '转头纵深衰减', featureDepth: '五官视差', earLag: '耳朵滞后', breathBand: '呼吸影响范围',
   rollBand: '身体倾斜范围', chest: '胸部', shoulders: '肩部',
   nose: '鼻子', eyeA: '眼睛 1', eyeB: '眼睛 2', earL: '左耳', earR: '右耳',
   brow: '眉毛', jaw: '下巴', band: '影响范围', bunL: '左侧发髻', bunR: '右侧发髻',

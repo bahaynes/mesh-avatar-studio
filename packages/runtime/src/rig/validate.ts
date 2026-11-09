@@ -59,7 +59,7 @@ const schema = (draft: boolean) => object({
   image: object({ width: integer, height: integer }),
   head: object({ ...ellipseFields, shiftX: number, shiftY: number, pivotX: number,
     pivotY: number, maxRoll: number, weightBand: band, turnBand: band, turnCore: number,
-    featureDepth: number }, ['turnCore', 'featureDepth']),
+    featureDepth: number, earLag: number }, ['turnCore', 'featureDepth', 'earLag']),
   body: object({ pivotX: number, pivotY: number, maxRoll: number, breathBand: band,
     rollBand: band, chest: ellipse, shoulders: array(ellipse),
     hip: object({ shift: number, band }) }, ['hip']),

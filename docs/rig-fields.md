@@ -34,6 +34,7 @@ the engine mapping. Do not copy the example illustration's coordinates into a ne
 | `head.turnBand` | Y range, px, where face-turn displacement fades; below chin into upper chest. |
 | `head.turnCore` | Optional. Upper edge of the turn-field ramp, default 0.84 (face inside r≈0.4 moves as one piece). Values above 1 make the centre lead and the contour lag, for more parallax; raise `shiftX` to keep centre travel. |
 | `head.featureDepth` | Optional. Multiplier on the per-feature turn offsets (nose, mouth, eyes, ears), default 1. Raise on large heads. |
+| `head.earLag` | Optional. Pixels both ears move against the turn at full turn (default 0), so the near ear tucks back and the far one comes forward. |
 | `body.pivotX` | Body roll pivot x, px; middle of the lower torso. |
 | `body.pivotY` | Body roll pivot y, px; near the bottom of the image. |
 | `body.maxRoll` | Body rotation at a ±10° body pose, radians; start near `0.035`. |

@@ -248,7 +248,9 @@ export function createRig(rig) {
     const depth = HEAD.featureDepth ?? 1;
     const ax = P.angleX / 30 * depth, ay = P.angleY / 30 * depth;
     p[0] += ax * (8 * w.nose + 5 * w.mouth) + (x - rig.face.eyeA.cx) * 0.12 * ax * w.eyeA - (x - rig.face.eyeB.cx) * 0.12 * ax * w.eyeB
-      - ax * 9 * w.earR + ax * 4 * w.earL - ax * 10 * (w.bunL + w.bunR);
+      - ax * 9 * w.earR + ax * 4 * w.earL - ax * 10 * (w.bunL + w.bunR)
+      // optional: both ears swing back against the turn (the near one hides, the far one shows)
+      - P.angleX / 30 * (HEAD.earLag ?? 0) * (w.earL + w.earR);
     p[1] -= ay * (6 * w.nose + 3 * w.mouth);
     p[1] += (y - rig.face.eyeA.cy) * -0.06 * Math.abs(ay) * w.eyeA + (y - rig.face.eyeB.cy) * -0.06 * Math.abs(ay) * w.eyeB;
     applyHead(p, w.head, P, w.turn);

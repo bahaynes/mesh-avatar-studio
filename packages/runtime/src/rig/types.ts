@@ -113,6 +113,8 @@ export interface Rig {
     turnCore?: number;
     /** Multiplier on the nose/mouth/eye/ear turn offsets (default 1). Raise on large heads. */
     featureDepth?: number;
+    /** Px both ears move against the turn at full turn (default 0). */
+    earLag?: number;
   };
   body: {
     pivotX: number; pivotY: number; maxRoll: number;
