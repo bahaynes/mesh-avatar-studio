@@ -183,9 +183,12 @@ For each, 4 [x, y] points from root to tip, every point on hair (not skin or bac
     # Centre on the hair + chin span, not "slightly above the eyes": with big hair the guide's centre
     # leaves the lower hair outside and the face shears under it (Ben's fix on Angharad, 2026-11-09).
     head_cy = (hy0 + max(hy1, chin[1])) / 2
+    # turnCore 3: the centre leads and the contour lags (a turn, not a slide); the centre gets ~0.26 of
+    # shift, so shift is scaled up to keep the travel. Ben approved on Angharad 2026-11-09. Needs a
+    # runtime with head.turnCore (studio b145a88 / Marinara patch); older runtimes would slide 3x further.
     head = {"cx": round(face_cx), "cy": round(head_cy),
             "rx": round(max(face_cx - hx0, hx1 - face_cx) + 10), "ry": round(max(head_cy - hy0, chin[1] - head_cy) + 10),
-            "shiftX": round(0.022 * W), "shiftY": round(0.016 * H), "pivotX": round(neck[0]), "pivotY": round(neck[1]),
+            "shiftX": round(0.022 * W / 0.26), "shiftY": round(0.016 * H / 0.26), "turnCore": 3, "featureDepth": 2, "pivotX": round(neck[0]), "pivotY": round(neck[1]),
             "maxRoll": 0.15, "weightBand": [round(chin[1] + 10), round(max(collar, chin[1] + 40))],
             "turnBand": [round(chin[1] + 10), round(max(collar, chin[1] + 40) + 60)]}
     shL, shR = s["shoulder_left"], s["shoulder_right"]
