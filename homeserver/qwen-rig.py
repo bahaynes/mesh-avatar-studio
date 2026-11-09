@@ -151,7 +151,7 @@ For each, 4 [x, y] points from root to tip, every point on hair (not skin or bac
     head_cy = (hy0 + max(hy1, chin[1])) / 2
     head = {"cx": round(face_cx), "cy": round(head_cy),
             "rx": round(max(face_cx - hx0, hx1 - face_cx) + 10), "ry": round(max(head_cy - hy0, chin[1] - head_cy) + 10),
-            "shiftX": round(0.035 * W), "shiftY": round(0.025 * H), "pivotX": round(neck[0]), "pivotY": round(neck[1]),
+            "shiftX": round(0.022 * W), "shiftY": round(0.016 * H), "pivotX": round(neck[0]), "pivotY": round(neck[1]),
             "maxRoll": 0.15, "weightBand": [round(chin[1] + 10), round(max(collar, chin[1] + 40))],
             "turnBand": [round(chin[1] + 10), round(max(collar, chin[1] + 40) + 60)]}
     shL, shR = s["shoulder_left"], s["shoulder_right"]
