@@ -27,18 +27,35 @@ def upload(png: Path, name: str) -> str:
     return post("/upload/image", body, f"multipart/form-data; boundary={b}")["name"]
 
 
+REWRITE = {
+    "Open the mouth in the Japanese vowel あ (a): a natural vertically open mouth, with a subtle tongue and upper teeth.":
+        "Open the mouth naturally as when saying 'ah': opened vertically, with a little of the tongue and upper teeth showing.",
+    "Draw the Japanese vowel あ (a) at half openness: a smaller, gently open mouth.":
+        "Part the lips slightly, as when starting to say 'ah': a small gap between them.",
+    "Draw the Japanese vowel い (i): a wide, narrow open smile with subtle upper teeth.":
+        "Spread the lips wide and only slightly open, as when saying 'ee', with a little of the upper teeth showing and the mouth corners level.",
+    "Draw the Japanese vowel お (o): a small rounded open mouth.":
+        "Round the lips into a small open O, as when saying 'oh'.",
+    ", softer and slightly moist,": ",",
+    ", slightly smaller irises with clear highlights,": ", the irises unchanged in size and colour,",
+    " in a gentle, soft curve, slightly wavering.": " in a gentle, soft curve.",
+    " Do not draw tears on the cheeks.": " Keep the cheeks unchanged.",
+    "curves gently downward, not the upward arc of a smiling closed eye.": "curves gently downward.",
+}
+
+
 def instruction(prompt_md: str) -> str:
     # The second paragraph is the drawing instruction; the rest is file-handling text Flux can't use.
     paras = [p.strip() for p in prompt_md.split("\n\n") if p.strip()]
     text = paras[1] if len(paras) > 1 else paras[0]
-    # Flux re-rolls iris colour and makeup from scratch inside the mask unless told otherwise.
-    # Flux doesn't know the Japanese vowel names; say the shape plainly.
-    text = text.replace("the Japanese vowel あ (a) at half openness: a smaller, gently open mouth", "the lips slightly parted, a small gap between them")
-    if "mouth" in text.lower() and "closed" not in text.lower():
-        text += " Draw full lips with the same natural lip colour, lip shape and shading as the reference; add no lipstick or makeup; only the opening changes."
-    elif "closed" in text.lower() and "mouth" in text.lower():
-        text += " Draw full, closed lips with the same natural lip colour, lip shape and shading as the reference; add no lipstick or makeup; only the lip curve changes."
-    return text + " Keep the same iris colour, eyeliner, lashes, lip colour and line art as the reference image."
+    # Upstream's texts (tools/variant-requests.py) say "Japanese vowel" for the mouth shapes, which Flux doesn't
+    # know, and a few words push style ("moist", "wavering", "clear highlights"). Say each shape plainly. Name only
+    # what to draw: Flux reads "no lipstick" or "full lips" as a request for them.
+    for up, ours in REWRITE.items():
+        text = text.replace(up, ours)
+    if "mouth" in text.lower() or "lips" in text.lower():
+        text += " Keep the lips exactly as full or thin as in the reference, bare and natural, same colour and shading."
+    return text + " Match the reference image exactly in iris colour, lip colour, line weight and shading; add nothing it does not have."
 
 
 def workflow(src, mask, text, w, h, seed):
