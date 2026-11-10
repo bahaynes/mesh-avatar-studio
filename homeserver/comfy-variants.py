@@ -1,11 +1,14 @@
 """Draw mesh-avatar variants on a Flux.2 Klein ComfyUI: masked edit of source.png, pasted back over the source.
 
 usage: uv run --with pillow --with numpy --with opencv-python-headless homeserver/comfy-variants.py projects/<name> [variant ...]
-Reads projects/<name>/variant-requests/<v>/{mask.png,prompt.md}, writes projects/<name>/variants/<v>.png.
+       ... comfy-variants.py projects/<name> --pick mouth_a=2 eyes_sad=1 ...
+Reads projects/<name>/variant-requests/<v>/{mask.png,prompt.md}; writes every try to work/tries/<v>-<n>.png and a
+contact sheet (original + tries) to work/sheet-<v>.png. It picks nothing: a person picks with --pick, which copies
+the chosen try to variants/<v>.png.
 ponytail: one-off tool for this machine's ComfyUI (COMFY env, default 10.10.10.114:8188); node names are
 the Klein stack from the Marinara FluxEdit connection. Upgrade path: tools/ if it proves general.
 """
-import io, json, os, re, sys, time, urllib.request, uuid
+import io, json, os, sys, time, urllib.request, uuid
 from pathlib import Path
 from PIL import Image
 
@@ -55,7 +58,7 @@ def instruction(prompt_md: str, name: str = "") -> str:
         text = text.replace(up, ours)
     if name.startswith("mouth"):
         text += " Keep the lips exactly as full or thin, bare and natural, same colour and shading."
-    return text + " Match the reference image exactly in iris colour, lip colour, line weight and shading; add nothing it does not have."
+    return text
 
 
 def workflow(src, mask, text, w, h, seed):
@@ -96,7 +99,22 @@ def run(wf) -> bytes:
     raise TimeoutError(pid)
 
 
-def match_tint(src, edit, mask_path, band=6):
+def skin_hex(src, mask_path, ring=16):
+    """Median colour of the opaque, bright (not line-art) source pixels in a ring just outside the mask."""
+    import numpy as np
+    from PIL import ImageFilter
+    region = Image.open(mask_path).getchannel("A").point(lambda a: 255 if a == 0 else 0)
+    r = np.asarray(region) > 0
+    near = np.asarray(region.filter(ImageFilter.MaxFilter(2 * ring + 1))) > 0
+    px = np.asarray(src.convert("RGBA"), float)
+    sel = px[near & ~r & (px[..., 3] > 250)][:, :3]
+    lum = sel.sum(1)
+    sel = sel[lum >= np.median(lum)]  # drop outlines and shadow; keep the skin's lit tone
+    c = np.median(sel, 0).round().astype(int)
+    return "#%02x%02x%02x" % tuple(c), c
+
+
+def match_tint(src, edit, mask_path, skin_rgb, band=6, tol=40):
     """Remove Flux's skin-colour drift inside the edit. It is not uniform (lighter toward the middle of the
     patch, e.g. +15 in green/blue there and ~0 at the edge), so measure source-minus-edit on pixels that are
     skin in both, smooth it into a field, and add that field across the patch. Lips, teeth and mouth interior
@@ -107,12 +125,10 @@ def match_tint(src, edit, mask_path, band=6):
     inner = region.filter(ImageFilter.MinFilter(2 * band + 1))
     r = np.asarray(region) > 0
     a, b = np.asarray(src.convert("RGB"), float), np.asarray(edit.convert("RGB"), float)
-    skin = lambda x: (x[..., 0] > 200) & (x[..., 1] > 150) & (x[..., 0] - x[..., 2] > 40) & (x[..., 0] - x[..., 2] < 110)
+    skin = lambda x: np.abs(x - skin_rgb).max(-1) < tol  # near the source's sampled skin colour
     m = (skin(a) & skin(b)).astype(np.float32)
     blur = lambda x: cv2.GaussianBlur(x.astype(np.float32), (0, 0), 12)
     cover = blur(m)
-    # ponytail: the skin test is a fixed warm-skin colour range; grey, blue or very dark skin gets no correction.
-    # Upgrade path: take the skin range from the source pixels around the mask.
     field = np.stack([blur((a[..., c] - b[..., c]) * m) / np.maximum(cover, 1e-3) for c in range(3)], -1)
     field[cover < 0.02] = 0
     out = b.copy()
@@ -126,8 +142,8 @@ def match_tint(src, edit, mask_path, band=6):
     return fixed, -field[r & (m > 0)].mean(axis=0) if (r & (m > 0)).any() else np.zeros(3)
 
 
-def judge(qwen, proj, v, source, mask_path, tries, text):
-    """Show Qwen the original next to each try (cropped to the mask) and let it pick one."""
+def sheet(proj, v, source, mask_path, tries):
+    """Original next to each try, cropped to the mask, for a person to pick from."""
     from PIL import ImageDraw
     m = Image.open(mask_path).getchannel("A").point(lambda a: 255 if a == 0 else 0).getbbox()
     pad = 40
@@ -135,44 +151,40 @@ def judge(qwen, proj, v, source, mask_path, tries, text):
     panels = [source] + tries
     cw, ch = box[2] - box[0], box[3] - box[1]
     scale = max(1, 400 // cw)
-    sheet = Image.new("RGB", (cw * scale, ch * scale * len(panels) + 30 * len(panels)), "white")
+    out = Image.new("RGB", (cw * scale, ch * scale * len(panels) + 30 * len(panels)), "white")
     for i, im in enumerate(panels):
         y = i * (ch * scale + 30)
         flat = Image.new("RGBA", im.size, (128, 128, 128, 255)); flat.alpha_composite(im.convert("RGBA"))
-        sheet.paste(flat.convert("RGB").crop(box).resize((cw * scale, ch * scale)), (0, y + 30))
-        ImageDraw.Draw(sheet).text((6, y + 6), "ORIGINAL" if i == 0 else f"TRY {i}", fill="black")
-    path = proj / "work" / f"judge-{v}.png"; sheet.save(path)
-    try:
-        a = _judge_ask(qwen, path, text, proj, v)
-    except SystemExit as e:  # Qwen's pick is advisory: a malformed answer must not stop the run
-        m = re.search(r'"best"\s*:\s*(\d+)', str(e))
-        return (int(m.group(1)) if m else 1), False, "judge answer unreadable; check by eye"
-    best = int(a.get("best", 1))
-    return (best if 1 <= best <= len(tries) else 1), bool(a.get("acceptable", True)), a.get("why", "")
+        out.paste(flat.convert("RGB").crop(box).resize((cw * scale, ch * scale)), (0, y + 30))
+        ImageDraw.Draw(out).text((6, y + 6), "ORIGINAL" if i == 0 else f"TRY {i}", fill="black")
+    path = proj / "work" / f"sheet-{v}.png"; out.save(path)
+    return path
 
 
-def _judge_ask(qwen, path, text, proj, v):
-    return qwen.ask(path, f"""The top panel is the ORIGINAL drawing. Each TRY panel is an edit that should do this: {text}
-Pick the try that best does what was asked while keeping the original's eye colour, makeup, lip colour and line style, with both eyes matching (no wink, no odd colours, no smears).
-{{"best": <try number>, "acceptable": true or false, "why": "<one sentence>"}}""", proj / "work" / f"qwen-judge-{v}.json")
+def pick(proj, picks):
+    import shutil
+    (proj / "variants").mkdir(exist_ok=True)
+    for p in picks:
+        v, n = p.split("=")
+        shutil.copy(proj / "work" / "tries" / f"{v}-{int(n)}.png", proj / "variants" / f"{v}.png")
+        print(f"picked {v}: try {n}")
 
 
 def main():
     proj = Path(sys.argv[1])
+    if sys.argv[2:3] == ["--pick"]:
+        return pick(proj, sys.argv[3:])
     names = sys.argv[2:] or DEFAULT
     source = Image.open(proj / "source.png").convert("RGBA")
-    out_dir = proj / "variants"
-    out_dir.mkdir(exist_ok=True)
     src_name = upload(proj / "source.png", f"{proj.name}-source.png")
-    import importlib.util
-    spec = importlib.util.spec_from_file_location("qwen_rig", Path(__file__).with_name("qwen-rig.py"))
-    qwen = importlib.util.module_from_spec(spec); spec.loader.exec_module(qwen)
     tries_n = int(os.environ.get("TRIES", 3))
     seed0 = int(os.environ.get("SEED", 1000))
     for i, v in enumerate(names):
         req = proj / "variant-requests" / v
         mask_name = upload(req / "mask.png", f"{proj.name}-{v}-mask.png")
-        text = instruction((req / "prompt.md").read_text(), v)
+        hexc, skin_rgb = skin_hex(source, req / "mask.png")
+        # Naming the skin hex roughly halves Flux's skin drift.
+        text = instruction((req / "prompt.md").read_text(), v) + f" Keep the skin in color {hexc}."
         # Per-character eye look (e.g. unusual irises) for the open-eye variants only: EYES_EXTRA="...".
         if v.startswith("eyes_") and v != "eyes_closed" and os.environ.get("EYES_EXTRA"):
             text += " " + os.environ["EYES_EXTRA"]
@@ -180,20 +192,14 @@ def main():
         for t in range(tries_n):
             rgb = Image.open(io.BytesIO(run(workflow(src_name, mask_name, text, *source.size, seed0 + 100 * i + t)))).convert("RGB")
             rgb.putalpha(source.getchannel("A"))  # Comfy drops alpha; the source's alpha is the right one
-            rgb, delta = match_tint(source, rgb, req / "mask.png")
+            rgb, delta = match_tint(source, rgb, req / "mask.png", skin_rgb)
             if abs(delta).max() > 3:
                 print(f"  {v} try {t + 1}: removed tint {delta.round(1).tolist()}", flush=True)
             tries.append(rgb)
             (proj / "work" / "tries").mkdir(exist_ok=True)
             rgb.save(proj / "work" / "tries" / f"{v}-{t + 1}.png")
-        pool, note = list(range(len(tries))), ""
-        sub = [tries[k] for k in pool]
-        best, ok, why = judge(qwen, proj, v, source, req / "mask.png", sub, text) if len(sub) > 1 else (1, True, "")
-        best = pool[best - 1] + 1
-        tries[best - 1].save(out_dir / f"{v}.png")
-        why += note
-        print(f"wrote {v}: try {best}/{tries_n}{'' if ok else '  NOT ACCEPTABLE, check by eye'} - {why}", flush=True)
-
+        print(f"{v}: {tries_n} tries, skin {hexc}, sheet {sheet(proj, v, source, req / 'mask.png', tries)}", flush=True)
+    print(f"pick: {sys.argv[0]} {proj} --pick " + " ".join(f"{v}=N" for v in names))
 
 if __name__ == "__main__":
     import urllib.parse
