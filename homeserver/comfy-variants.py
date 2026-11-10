@@ -44,7 +44,7 @@ REWRITE = {
 }
 
 
-def instruction(prompt_md: str) -> str:
+def instruction(prompt_md: str, name: str = "") -> str:
     # The second paragraph is the drawing instruction; the rest is file-handling text Flux can't use.
     paras = [p.strip() for p in prompt_md.split("\n\n") if p.strip()]
     text = paras[1] if len(paras) > 1 else paras[0]
@@ -53,16 +53,18 @@ def instruction(prompt_md: str) -> str:
     # what to draw: Flux reads "no lipstick" or "full lips" as a request for them.
     for up, ours in REWRITE.items():
         text = text.replace(up, ours)
-    if "mouth" in text.lower() or "lips" in text.lower():
+    if name in WIDTH_MATCHED:  # "o" narrows on purpose: a keep-the-width line contradicts it and Flux then changes nothing
         text += (" Keep the mouth exactly as wide as in the reference, its corners where they are, and the lips exactly"
                  " as full or thin, bare and natural, same colour and shading; only the opening changes.")
+    elif name.startswith("mouth"):
+        text += " Keep the lips exactly as full or thin, bare and natural, same colour and shading."
     return text + " Match the reference image exactly in iris colour, lip colour, line weight and shading; add nothing it does not have."
 
 
 def workflow(src, mask, text, w, h, seed):
     return {
-        "unet": {"class_type": "UnetLoaderGGUF", "inputs": {"unet_name": "flux-2-klein-9b-Q5_K_M.gguf"}},
-        "clip": {"class_type": "CLIPLoaderGGUF", "inputs": {"clip_name": "Qwen3-8B-Q5_K_M.gguf", "type": "flux2"}},
+        "unet": {"class_type": "UnetLoaderGGUF", "inputs": {"unet_name": os.environ.get("UNET", "flux-2-klein-9b-Q4_K_M.gguf")}},
+        "clip": {"class_type": "CLIPLoaderGGUF", "inputs": {"clip_name": os.environ.get("CLIP_GGUF", "Qwen3-8B-Q4_K_M.gguf"), "type": "flux2"}},
         "vae": {"class_type": "VAELoader", "inputs": {"vae_name": "full_encoder_small_decoder.safetensors"}},
         "src": {"class_type": "LoadImage", "inputs": {"image": src}},
         "mask": {"class_type": "LoadImage", "inputs": {"image": mask}},  # MASK out = 1 where transparent = editable
@@ -211,7 +213,7 @@ def main():
     for i, v in enumerate(names):
         req = proj / "variant-requests" / v
         mask_name = upload(req / "mask.png", f"{proj.name}-{v}-mask.png")
-        text = instruction((req / "prompt.md").read_text())
+        text = instruction((req / "prompt.md").read_text(), v)
         # Per-character eye look (e.g. unusual irises) for the open-eye variants only: EYES_EXTRA="...".
         if v.startswith("eyes_") and v != "eyes_closed" and os.environ.get("EYES_EXTRA"):
             text += " " + os.environ["EYES_EXTRA"]

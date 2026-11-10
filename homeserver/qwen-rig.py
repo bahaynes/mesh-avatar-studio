@@ -207,8 +207,13 @@ For each, 4 [x, y] points from root to tip, every point on hair (not skin or bac
             "brow": {**ell(face_cx, s["brow_y"], eye_dist, 0.1 * eye_dist), "band": [round(s["brow_y"] + 0.12 * eye_dist), round(eye_y - 0.05 * eye_dist)]},
             "jaw": {**ell(face_cx, chin[1] - 0.25 * chin_gap, 0.7 * eye_dist, 0.3 * chin_gap),
                     "band": [round(mcy + 0.45 * chin_gap), round(mcy + 0.7 * chin_gap)]}}
+    # area spans from just under the nose to just above the chin: an open mouth drops the jaw, so it needs room
+    # below the lip line, and Flux's drawing is clipped at the mask edge.
+    a_top, a_bot = mcy - 0.6 * (mcy - nose[1]), chin[1] - 0.1 * chin_gap
+    # area.rx ~1.6x the lip half-length, as upstream's sample rig: the runtime shows the drawn mouth fully only
+    # inside 55% of the radius, and the ellipse narrows above and below the lip line, where an open mouth needs room.
     mouth = {"cx": round(mcx, 1), "cy": round(mcy, 1), "angle": round(angle, 3), "halfLen": round(half),
-             "bow": round(mid[1] - mcy, 1), "area": {"cx": round(mcx), "cy": round(mcy), "rx": round(half + 8), "ry": round(max(20, 0.5 * chin_gap)), "angle": round(angle, 3)}}
+             "bow": round(mid[1] - mcy, 1), "area": {"cx": round(mcx), "cy": round((a_top + a_bot) / 2), "rx": round(1.6 * half), "ry": round(max(20, (a_bot - a_top) / 2)), "angle": round(angle, 3)}}
     fine = clampbox(int(hx0 - 20), int(hy0 - 20), int(hx1 + 20), int(max(hy1, chin[1]) + 40), W, H)
     draft.update({"head": head, "body": body, "face": face, "eyes": eyes, "mouth": mouth,
                   "cheeks": [P((eLx, nose[1] - 0.05 * eye_dist)), P((eRx, nose[1] - 0.05 * eye_dist))], "strands": strands,
