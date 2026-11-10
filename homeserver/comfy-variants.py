@@ -53,10 +53,7 @@ def instruction(prompt_md: str, name: str = "") -> str:
     # what to draw: Flux reads "no lipstick" or "full lips" as a request for them.
     for up, ours in REWRITE.items():
         text = text.replace(up, ours)
-    if name in WIDTH_MATCHED:  # "o" narrows on purpose: a keep-the-width line contradicts it and Flux then changes nothing
-        text += (" Keep the mouth exactly as wide as in the reference, its corners where they are, and the lips exactly"
-                 " as full or thin, bare and natural, same colour and shading; only the opening changes.")
-    elif name.startswith("mouth"):
+    if name.startswith("mouth"):
         text += " Keep the lips exactly as full or thin, bare and natural, same colour and shading."
     return text + " Match the reference image exactly in iris colour, lip colour, line weight and shading; add nothing it does not have."
 
@@ -129,44 +126,6 @@ def match_tint(src, edit, mask_path, band=6):
     return fixed, -field[r & (m > 0)].mean(axis=0) if (r & (m > 0)).any() else np.zeros(3)
 
 
-# Mouths drawn narrower than the resting lips make the mouth shrink before it opens. "o" is narrow on purpose.
-WIDTH_MATCHED = {"mouth_a", "mouth_a_half", "mouth_i", "mouth_angry", "mouth_sad"}
-WIDTH_TOL = float(os.environ.get("WIDTH_TOL", 0.08))  # allowed share narrower/wider than the source lips
-MAX_STRETCH = float(os.environ.get("MAX_STRETCH", 1.3))  # beyond this a sideways stretch distorts teeth; flag instead
-
-
-def lip_extent(img, mask_path, band=6):
-    """Left/right x of the mouth: pixels inside the mask that differ from the skin colour sampled on the
-    mask's inner edge (no lip-colour assumption), largest blob through the mask centre row band."""
-    import numpy as np
-    from PIL import ImageFilter
-    region = Image.open(mask_path).getchannel("A").point(lambda a: 255 if a == 0 else 0)
-    inner = region.filter(ImageFilter.MinFilter(2 * band + 1))
-    r = np.asarray(region) > 0
-    ring = r & ~(np.asarray(inner) > 0)
-    a = np.asarray(img.convert("RGB"), float)
-    skin = np.median(a[ring], axis=0)
-    off = (np.abs(a - skin).sum(axis=2) > 90) & (np.asarray(inner) > 0)
-    cols = np.nonzero(off.sum(axis=0) >= 3)[0]
-    return (int(cols.min()), int(cols.max())) if len(cols) else None
-
-
-def stretch_to(src_ext, img, ext, mask_path):
-    """Scale the edited mouth sideways about its centre so its width matches the source lips."""
-    import numpy as np
-    from PIL import ImageFilter
-    sx = (src_ext[1] - src_ext[0]) / max(1, ext[1] - ext[0])
-    cx = (ext[0] + ext[1]) / 2
-    region = Image.open(mask_path).getchannel("A").point(lambda a: 255 if a == 0 else 0)
-    x0, y0, x1, y1 = region.getbbox()
-    crop = img.crop((x0, y0, x1, y1))
-    nw = round(crop.width * sx)
-    lay = img.copy()
-    lay.paste(crop.resize((nw, crop.height), Image.LANCZOS), (round(cx - (cx - x0) * sx), y0))
-    keep = region.filter(ImageFilter.MinFilter(13)).filter(ImageFilter.GaussianBlur(3))
-    return Image.composite(lay, img, keep)
-
-
 def judge(qwen, proj, v, source, mask_path, tries, text):
     """Show Qwen the original next to each try (cropped to the mask) and let it pick one."""
     from PIL import ImageDraw
@@ -228,22 +187,6 @@ def main():
             (proj / "work" / "tries").mkdir(exist_ok=True)
             rgb.save(proj / "work" / "tries" / f"{v}-{t + 1}.png")
         pool, note = list(range(len(tries))), ""
-        src_ext = lip_extent(source, req / "mask.png") if v in WIDTH_MATCHED else None
-        if src_ext:
-            sw = src_ext[1] - src_ext[0]
-            ext = [lip_extent(t, req / "mask.png") for t in tries]
-            err = [abs((e[1] - e[0]) / sw - 1) if e else 9 for e in ext]
-            print(f"  {v} widths vs source {sw}px: {[e[1] - e[0] if e else None for e in ext]}", flush=True)
-            pool = [k for k in pool if err[k] <= WIDTH_TOL]
-            if not pool:  # none close enough: stretch the closest one
-                k = min(range(len(tries)), key=err.__getitem__)
-                sx = sw / max(1, ext[k][1] - ext[k][0]) if ext[k] else 9
-                if sx <= MAX_STRETCH:
-                    tries[k] = stretch_to(src_ext, tries[k], ext[k], req / "mask.png")
-                    note = f" (stretched try {k + 1} x{sx:.2f} to source width)"
-                else:
-                    note = f"  WIDTH OFF x{sx:.2f}, too far to stretch: check by eye"
-                pool = [k]
         sub = [tries[k] for k in pool]
         best, ok, why = judge(qwen, proj, v, source, req / "mask.png", sub, text) if len(sub) > 1 else (1, True, "")
         best = pool[best - 1] + 1
