@@ -64,7 +64,9 @@ def instruction(prompt_md: str, name: str = "") -> str:
     for up, ours in REWRITE.items():
         text = text.replace(up, ours)
     if name.startswith("mouth"):
-        text += " Keep the lips exactly as full or thin, bare and natural, same colour and shading."
+        text += " Keep the lips exactly as full or thin, same colour and shading." if os.environ.get("STYLE") else " Keep the lips exactly as full or thin, bare and natural, same colour and shading."
+    if os.environ.get("STYLE"):  # generic drawing-style line, e.g. "Clean black ink outlines, flat cel colour."
+        text += " " + os.environ["STYLE"]
     return text
 
 
@@ -95,6 +97,9 @@ def guided(wf, guide_name):
     """Swap the character reference for the edge-map reference, through the RefControl LoRA."""
     wf["lora"] = {"class_type": "LoraLoaderModelOnly", "inputs": {"model": ["unet", 0], "lora_name": GUIDE_LORA, "strength_model": float(os.environ.get("GUIDE_STRENGTH", 1.0))}}
     wf["guider"]["inputs"]["model"] = ["lora", 0]
+    if os.environ.get("STYLE_LORA"):  # optional style LoRA stacked on the guide LoRA
+        wf["slora"] = {"class_type": "LoraLoaderModelOnly", "inputs": {"model": ["lora", 0], "lora_name": os.environ["STYLE_LORA"], "strength_model": float(os.environ.get("STYLE_LORA_STRENGTH", 1.0))}}
+        wf["guider"]["inputs"]["model"] = ["slora", 0]
     wf["guide"] = {"class_type": "LoadImage", "inputs": {"image": guide_name}}
     wf["genc"] = {"class_type": "VAEEncode", "inputs": {"pixels": ["guide", 0], "vae": ["vae", 0]}}
     wf["ref"]["inputs"]["latent"] = ["genc", 0]
