@@ -83,6 +83,12 @@ async function refresh() {
     const tag = v.picked ? `<span class="tag">try ${v.picked}</span>` : v.hasVariant ? '<span class="tag">picked earlier (by hand)</span>' : v.tries ? '<span class="tag unpicked">unpicked</span>' : '<span class="tag missing">missing</span>';
     return `<section class="row"><h2>${v.name} ${tag}<span class="spacer"></span><button data-gen="${v.name}" ${running ? 'disabled' : ''}>Regenerate</button></h2><div class="strip">${figs}</div></section>`;
   }).join('');
+  // Older projects have tries but no crops yet: build them once without waiting for a button press.
+  if (!running && !job?.label?.startsWith('rebuild') && s.variants.some(v => v.tries && !v.crops)) {
+    await api(`run/${project}`, { action: 'sheets' }).catch(() => {});
+    timer = setTimeout(refresh, 500);
+    return;
+  }
   if (running) timer = setTimeout(refresh, 2000);
 }
 
