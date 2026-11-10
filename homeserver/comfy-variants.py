@@ -177,6 +177,12 @@ def main():
     proj = Path(sys.argv[1])
     if sys.argv[2:3] == ["--pick"]:
         return pick(proj, sys.argv[3:])
+    overrides_path = proj / "work" / "prompt-overrides.json"  # written by the /__picker page
+    overrides = json.loads(overrides_path.read_text()) if overrides_path.exists() else {}
+    if sys.argv[2:3] == ["--prompts"]:  # default and current prompt per variant, for the picker page
+        reqs = sorted(d for d in (proj / "variant-requests").iterdir() if d.is_dir())
+        print(json.dumps({d.name: {"default": instruction((d / "prompt.md").read_text(), d.name), "override": overrides.get(d.name)} for d in reqs}))
+        return
     if sys.argv[2:3] == ["--sheets"]:  # rebuild sheets and crops from saved tries, no ComfyUI
         source = Image.open(proj / "source.png").convert("RGBA")
         for v in sys.argv[3:] or DEFAULT:
@@ -194,9 +200,9 @@ def main():
         mask_name = upload(req / "mask.png", f"{proj.name}-{v}-mask.png")
         hexc, skin_rgb = skin_hex(source, req / "mask.png")
         # Naming the skin hex roughly halves Flux's skin drift.
-        text = instruction((req / "prompt.md").read_text(), v) + f" Keep the skin in color {hexc}."
+        text = (overrides.get(v) or instruction((req / "prompt.md").read_text(), v)) + f" Keep the skin in color {hexc}."
         # Per-character eye look (e.g. unusual irises) for the open-eye variants only: EYES_EXTRA="...".
-        if v.startswith("eyes_") and v != "eyes_closed" and os.environ.get("EYES_EXTRA"):
+        if v not in overrides and v.startswith("eyes_") and v != "eyes_closed" and os.environ.get("EYES_EXTRA"):
             text += " " + os.environ["EYES_EXTRA"]
         tries = []
         (proj / "work" / "tries").mkdir(parents=True, exist_ok=True)

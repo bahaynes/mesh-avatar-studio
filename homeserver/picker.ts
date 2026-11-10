@@ -1,7 +1,7 @@
 // Homeserver-only: a /__picker page in the Studio dev server for drawn-variant generation and picking
 // (homeserver/comfy-variants.py), so nobody has to type --pick lines. Same Caddy + Authelia gate as Studio.
 // ponytail: one job at a time, in memory; a dev-server restart forgets a running job (its log file stays).
-import { spawn } from 'node:child_process';
+import { spawn, execFile } from 'node:child_process';
 import { copyFile, readdir, readFile, writeFile, stat, mkdir, appendFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Plugin } from 'vite';
@@ -63,6 +63,11 @@ export function pickerPlugin(root: string): Plugin {
             json(res, 200, all); return;
           }
           if (parts[0] === 'state' && project) { json(res, 200, { ...(await projectState(root, project)), job }); return; }
+          if (parts[0] === 'prompts' && project) {
+            execFile('uv', [...UV, script, `projects/${project}`, '--prompts'], { cwd: root, timeout: 60_000 }, (e, out, err) =>
+              e ? json(res, 500, { error: err.slice(-2000) || e.message }) : (res.setHeader('content-type', 'application/json'), res.end(out)));
+            return;
+          }
           if (parts[0] === 'img' && project) {
             const file = parts[2];
             if (!/^[A-Za-z0-9_-]+\.png$/.test(file ?? '')) { json(res, 400, { error: 'bad file' }); return; }
@@ -81,6 +86,15 @@ export function pickerPlugin(root: string): Plugin {
             const picks = JSON.parse(await readFile(picksPath, 'utf8').catch(() => '{}'));
             picks[b.variant] = b.try;
             await writeFile(picksPath, JSON.stringify(picks, null, 2));
+            json(res, 200, { ok: true }); return;
+          }
+          if (parts[0] === 'prompt') {
+            if (!NAME.test(b.variant) || (b.text !== null && (typeof b.text !== 'string' || b.text.length > 4000))) { json(res, 400, { error: 'bad prompt' }); return; }
+            const path = join(dir, 'work', 'prompt-overrides.json');
+            const all = JSON.parse(await readFile(path, 'utf8').catch(() => '{}'));
+            if (b.text === null || !b.text.trim()) delete all[b.variant]; else all[b.variant] = b.text.trim();
+            await mkdir(join(dir, 'work'), { recursive: true });
+            await writeFile(path, JSON.stringify(all, null, 2));
             json(res, 200, { ok: true }); return;
           }
           if (parts[0] === 'run') {
