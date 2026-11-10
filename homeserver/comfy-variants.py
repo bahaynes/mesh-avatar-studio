@@ -1,6 +1,6 @@
 """Draw mesh-avatar variants on a Flux.2 Klein ComfyUI: masked edit of source.png, pasted back over the source.
 
-usage: uv run --with pillow --with numpy homeserver/comfy-variants.py projects/<name> [variant ...]
+usage: uv run --with pillow --with numpy --with opencv-python-headless homeserver/comfy-variants.py projects/<name> [variant ...]
 Reads projects/<name>/variant-requests/<v>/{mask.png,prompt.md}, writes projects/<name>/variants/<v>.png.
 ponytail: one-off tool for this machine's ComfyUI (COMFY env, default 10.10.10.114:8188); node names are
 the Klein stack from the Marinara FluxEdit connection. Upgrade path: tools/ if it proves general.
@@ -98,25 +98,33 @@ def run(wf) -> bytes:
 
 
 def match_tint(src, edit, mask_path, band=6):
-    """Remove Flux's uniform skin-colour drift: compare a band just inside the mask edge (still skin, should
-    match the source) and shift the whole edited area back by the mean difference."""
-    import numpy as np
+    """Remove Flux's skin-colour drift inside the edit. It is not uniform (lighter toward the middle of the
+    patch, e.g. +15 in green/blue there and ~0 at the edge), so measure source-minus-edit on pixels that are
+    skin in both, smooth it into a field, and add that field across the patch. Lips, teeth and mouth interior
+    are not skin, so they don't steer the correction."""
+    import numpy as np, cv2
     from PIL import ImageFilter
     region = Image.open(mask_path).getchannel("A").point(lambda a: 255 if a == 0 else 0)
     inner = region.filter(ImageFilter.MinFilter(2 * band + 1))
     r = np.asarray(region) > 0
-    ring = r & ~(np.asarray(inner) > 0)
     a, b = np.asarray(src.convert("RGB"), float), np.asarray(edit.convert("RGB"), float)
-    delta = (b[ring] - a[ring]).mean(axis=0)
+    skin = lambda x: (x[..., 0] > 200) & (x[..., 1] > 150) & (x[..., 0] - x[..., 2] > 40) & (x[..., 0] - x[..., 2] < 110)
+    m = (skin(a) & skin(b)).astype(np.float32)
+    blur = lambda x: cv2.GaussianBlur(x.astype(np.float32), (0, 0), 12)
+    cover = blur(m)
+    # ponytail: the skin test is a fixed warm-skin colour range; grey, blue or very dark skin gets no correction.
+    # Upgrade path: take the skin range from the source pixels around the mask.
+    field = np.stack([blur((a[..., c] - b[..., c]) * m) / np.maximum(cover, 1e-3) for c in range(3)], -1)
+    field[cover < 0.02] = 0
     out = b.copy()
-    out[r] = np.clip(b[r] - delta, 0, 255)
-    # Feather: fade the edit into the source over the band inside the mask edge, so no seam (the visible
-    # oval) remains. Outside the mask stays identical to the source.
+    out[r] = np.clip(b[r] + field[r], 0, 255)
+    # Feather: fade the edit into the source over the band inside the mask edge, so no seam remains.
+    # Outside the mask stays identical to the source.
     w = np.asarray(inner.filter(ImageFilter.GaussianBlur(band / 2)), float)[..., None] / 255 * r[..., None]
     out = a * (1 - w) + out * w
     fixed = Image.fromarray(out.astype("uint8"), "RGB")
     fixed.putalpha(edit.getchannel("A"))
-    return fixed, delta
+    return fixed, -field[r & (m > 0)].mean(axis=0) if (r & (m > 0)).any() else np.zeros(3)
 
 
 # Mouths drawn narrower than the resting lips make the mouth shrink before it opens. "o" is narrow on purpose.
