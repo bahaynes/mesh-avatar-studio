@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Variant Picker</title>
+<style>
+  :root { --bg: #f6f5f2; --fg: #1d1d1b; --muted: #6b6a66; --card: #fff; --line: #dcdad4; --accent: #1f7a5a; --warn: #b4531a; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #161615; --fg: #ebe9e4; --muted: #9a988f; --card: #22221f; --line: #3a3934; --accent: #4fbf94; --warn: #e8955e; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.4 system-ui, sans-serif; }
+  header { position: sticky; top: 0; z-index: 2; background: var(--bg); border-bottom: 1px solid var(--line); padding: 10px 16px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  main { padding: 16px; max-width: 1200px; margin: 0 auto; }
+  select, button, input { font: inherit; color: inherit; background: var(--card); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; }
+  button { cursor: pointer; } button:hover { border-color: var(--accent); } button:disabled { opacity: .5; cursor: default; }
+  input[type=number] { width: 4.5em; }
+  .row { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 10px; margin-bottom: 12px; }
+  .row h2 { font-size: 15px; margin: 0 0 8px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .tag { font-size: 12px; font-weight: normal; color: var(--muted); }
+  .tag.unpicked { color: var(--warn); }
+  .tag.missing { color: var(--warn); font-weight: 600; }
+  .row h2 .spacer { flex: 1; }
+  .strip { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; }
+  figure { margin: 0; flex: 0 0 auto; text-align: center; }
+  figure img { display: block; height: 140px; max-width: 42vw; object-fit: contain; border: 3px solid transparent; border-radius: 6px; background: #808080; }
+  figure.try img { cursor: pointer; } figure.try img:hover { border-color: var(--line); }
+  figure.picked img { border-color: var(--accent); }
+  figcaption { font-size: 12px; color: var(--muted); }
+  figure.picked figcaption { color: var(--accent); font-weight: 600; }
+  #job { white-space: pre-wrap; font: 12px/1.35 ui-monospace, monospace; background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 8px; max-height: 220px; overflow: auto; margin-bottom: 12px; }
+  #job:empty { display: none; }
+  .err { color: var(--warn); }
+</style>
+</head>
+<body>
+<header>
+  <select id="project" aria-label="Project"></select>
+  <label>Tries <input id="tries" type="number" min="1" max="8" value="3"></label>
+  <button id="genAll" title="Draw every variant again (new seed)">Generate all</button>
+  <button id="sheets" title="Rebuild crops from saved tries, no ComfyUI">Rebuild sheets</button>
+  <button id="sprites" title="Build sprites from the picked variants">Build sprites</button>
+  <span id="status" class="tag"></span>
+</header>
+<main>
+  <div id="job"></div>
+  <div id="rows"></div>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const api = (path, body) => fetch(`/__picker/${path}`, body ? { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) } : {})
+  .then(async r => { const j = await r.json(); if (!r.ok) throw new Error(j.error || r.status); return j; });
+let project = '', stamp = Date.now(), lastJobDone = true, timer;
+
+async function load() {
+  const list = await api('projects');
+  $('project').innerHTML = list.map(p => `<option>${p}</option>`).join('');
+  try { const saved = localStorage.getItem('picker.project'); if (list.includes(saved)) $('project').value = saved; } catch {}
+  project = $('project').value;
+  refresh();
+}
+
+function busy(job) { return job && !job.done; }
+
+async function refresh() {
+  clearTimeout(timer);
+  if (!project) return;
+  let s;
+  try { s = await api(`state/${project}`); } catch (e) { $('status').textContent = e.message; return; }
+  const job = s.job, running = busy(job);
+  if (job && job.done && !lastJobDone) stamp = Date.now();  // a job just finished: reload images
+  lastJobDone = !running;
+  $('job').textContent = job && job.project === project ? `${job.label}: ${running ? 'running…' : job.ok ? 'done' : 'FAILED'}\n${job.log.trim().split('\n').slice(-30).join('\n')}` : '';
+  $('job').scrollTop = 1e9;
+  for (const b of document.querySelectorAll('header button, .row button')) b.disabled = running;
+  const unpicked = s.variants.filter(v => v.tries && !v.picked && !v.hasVariant).length;
+  $('status').textContent = running ? `busy: ${job.label} (${job.project})` : unpicked ? `${unpicked} unpicked` : 'all picked';
+  $('rows').innerHTML = s.variants.map(v => {
+    const figs = !v.tries ? '<span class="tag">no tries yet</span>'
+      : !v.crops ? '<span class="tag">tries exist, no crops: press Rebuild sheets</span>'
+      : [`<figure><img src="/__picker/img/${project}/${v.name}-0.png?${stamp}" alt="original"><figcaption>original</figcaption></figure>`]
+          .concat(Array.from({ length: v.tries }, (_, i) => i + 1).map(n =>
+            `<figure class="try${v.picked === n ? ' picked' : ''}"><img data-v="${v.name}" data-n="${n}" src="/__picker/img/${project}/${v.name}-${n}.png?${stamp}" alt="try ${n}"><figcaption>${v.picked === n ? '✓ ' : ''}try ${n}</figcaption></figure>`)).join('');
+    const tag = v.picked ? `<span class="tag">try ${v.picked}</span>` : v.hasVariant ? '<span class="tag">picked earlier (by hand)</span>' : v.tries ? '<span class="tag unpicked">unpicked</span>' : '<span class="tag missing">missing</span>';
+    return `<section class="row"><h2>${v.name} ${tag}<span class="spacer"></span><button data-gen="${v.name}" ${running ? 'disabled' : ''}>Regenerate</button></h2><div class="strip">${figs}</div></section>`;
+  }).join('');
+  if (running) timer = setTimeout(refresh, 2000);
+}
+
+async function act(fn) { try { await fn(); } catch (e) { $('status').innerHTML = `<span class="err">${e.message}</span>`; } refresh(); }
+const tries = () => Number($('tries').value) || 3;
+
+$('project').onchange = () => { project = $('project').value; try { localStorage.setItem('picker.project', project); } catch {} refresh(); };
+$('genAll').onclick = () => confirm(`Redraw all variants of ${project}? This replaces every try and clears picks.`) && act(() => api(`run/${project}`, { action: 'generate', tries: tries() }));
+$('sheets').onclick = () => act(() => api(`run/${project}`, { action: 'sheets' }));
+$('sprites').onclick = () => act(() => api(`run/${project}`, { action: 'sprites' }));
+$('rows').onclick = e => {
+  const t = e.target;
+  if (t.dataset.gen) act(() => api(`run/${project}`, { action: 'generate', variants: [t.dataset.gen], tries: tries() }));
+  else if (t.dataset.n) act(() => api(`pick/${project}`, { variant: t.dataset.v, try: Number(t.dataset.n) }));
+};
+load();
+</script>
+</body>
+</html>

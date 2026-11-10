@@ -1,6 +1,6 @@
 """Draw mesh-avatar variants on a Flux.2 Klein ComfyUI: masked edit of source.png, pasted back over the source.
 
-usage: uv run --with pillow --with numpy --with opencv-python-headless homeserver/comfy-variants.py projects/<name> [variant ...]
+usage (or the /__picker page in Studio): uv run --with pillow --with numpy --with opencv-python-headless homeserver/comfy-variants.py projects/<name> [variant ...]
        ... comfy-variants.py projects/<name> --pick mouth_a=2 eyes_sad=1 ...
 Reads projects/<name>/variant-requests/<v>/{mask.png,prompt.md}; writes every try to work/tries/<v>-<n>.png and a
 contact sheet (original + tries) to work/sheet-<v>.png. It picks nothing: a person picks with --pick, which copies
@@ -152,10 +152,13 @@ def sheet(proj, v, source, mask_path, tries):
     cw, ch = box[2] - box[0], box[3] - box[1]
     scale = max(1, 400 // cw)
     out = Image.new("RGB", (cw * scale, ch * scale * len(panels) + 30 * len(panels)), "white")
+    (proj / "work" / "crops").mkdir(parents=True, exist_ok=True)
     for i, im in enumerate(panels):
         y = i * (ch * scale + 30)
         flat = Image.new("RGBA", im.size, (128, 128, 128, 255)); flat.alpha_composite(im.convert("RGBA"))
-        out.paste(flat.convert("RGB").crop(box).resize((cw * scale, ch * scale)), (0, y + 30))
+        crop = flat.convert("RGB").crop(box).resize((cw * scale, ch * scale))
+        crop.save(proj / "work" / "crops" / f"{v}-{i}.png")  # 0 = original; the picker page shows these
+        out.paste(crop, (0, y + 30))
         ImageDraw.Draw(out).text((6, y + 6), "ORIGINAL" if i == 0 else f"TRY {i}", fill="black")
     path = proj / "work" / f"sheet-{v}.png"; out.save(path)
     return path
@@ -174,6 +177,13 @@ def main():
     proj = Path(sys.argv[1])
     if sys.argv[2:3] == ["--pick"]:
         return pick(proj, sys.argv[3:])
+    if sys.argv[2:3] == ["--sheets"]:  # rebuild sheets and crops from saved tries, no ComfyUI
+        source = Image.open(proj / "source.png").convert("RGBA")
+        for v in sys.argv[3:] or DEFAULT:
+            tries = sorted((proj / "work" / "tries").glob(f"{v}-*.png"), key=lambda f: int(f.stem.rsplit("-", 1)[1]))
+            if tries:
+                sheet(proj, v, source, proj / "variant-requests" / v / "mask.png", [Image.open(t).convert("RGBA") for t in tries])
+        return
     names = sys.argv[2:] or DEFAULT
     source = Image.open(proj / "source.png").convert("RGBA")
     src_name = upload(proj / "source.png", f"{proj.name}-source.png")
@@ -189,6 +199,9 @@ def main():
         if v.startswith("eyes_") and v != "eyes_closed" and os.environ.get("EYES_EXTRA"):
             text += " " + os.environ["EYES_EXTRA"]
         tries = []
+        (proj / "work" / "tries").mkdir(parents=True, exist_ok=True)
+        for f in (proj / "work" / "tries").glob(f"{v}-*.png"):
+            f.unlink()  # a rerun replaces this variant's tries, so no stale try survives with a lower count
         for t in range(tries_n):
             rgb = Image.open(io.BytesIO(run(workflow(src_name, mask_name, text, *source.size, seed0 + 100 * i + t)))).convert("RGB")
             rgb.putalpha(source.getchannel("A"))  # Comfy drops alpha; the source's alpha is the right one
