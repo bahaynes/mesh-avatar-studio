@@ -17,6 +17,13 @@ DEFAULT = ["eyes_closed", "eyes_half", "eyes_smile", "eyes_sad", "eyes_surprise"
 # A partial set breaks mesh-avatar runtimes before 0.3.1 (Marinara bundled 0.2.1), so default to all.
 
 
+# Shape-guided variants: Flux Klein copies its reference back for small mouth changes (oh, half-ah), so for
+# these the reference is an edge map with the target outline drawn by code, plus the RefControl canny LoRA.
+# ponytail: two hand-tuned outlines sized from the detected lips. Upgrade path: more shapes, per-character tuning.
+GUIDED = [g for g in os.environ.get("GUIDE", "mouth_o,mouth_a_half").split(",") if g]
+GUIDE_LORA = os.environ.get("GUIDE_LORA", "flux2_klein_9b_refcontrol_canny.safetensors")
+
+
 def post(path, data, ctype):
     req = urllib.request.Request(COMFY + path, data=data, headers={"Content-Type": ctype})
     return json.load(urllib.request.urlopen(req, timeout=60))
@@ -84,6 +91,16 @@ def workflow(src, mask, text, w, h, seed):
     }
 
 
+def guided(wf, guide_name):
+    """Swap the character reference for the edge-map reference, through the RefControl LoRA."""
+    wf["lora"] = {"class_type": "LoraLoaderModelOnly", "inputs": {"model": ["unet", 0], "lora_name": GUIDE_LORA, "strength_model": float(os.environ.get("GUIDE_STRENGTH", 1.0))}}
+    wf["guider"]["inputs"]["model"] = ["lora", 0]
+    wf["guide"] = {"class_type": "LoadImage", "inputs": {"image": guide_name}}
+    wf["genc"] = {"class_type": "VAEEncode", "inputs": {"pixels": ["guide", 0], "vae": ["vae", 0]}}
+    wf["ref"]["inputs"]["latent"] = ["genc", 0]
+    return wf
+
+
 def run(wf) -> bytes:
     pid = post("/prompt", json.dumps({"prompt": wf}).encode(), "application/json")["prompt_id"]
     for _ in range(600):
@@ -112,6 +129,41 @@ def skin_hex(src, mask_path, ring=16):
     sel = sel[lum >= np.median(lum)]  # drop outlines and shadow; keep the skin's lit tone
     c = np.median(sel, 0).round().astype(int)
     return "#%02x%02x%02x" % tuple(c), c
+
+
+def lips_box(proj, src, skin_rgb):
+    """Mouth centre and size from the rig (Qwen draft, fixed by hand in Studio); lip colour sampled there."""
+    import numpy as np, cv2
+    rig = json.loads((proj / "rig.json").read_text()) if (proj / "rig.json").exists() else json.loads((proj / "rig.draft.json").read_text())
+    mo = rig["mouth"]
+    cx, cy, half = round(mo["cx"]), round(mo["cy"]), round(mo["halfLen"])
+    lh = max(12, round(mo["area"]["ry"] * .5))
+    rgb = np.asarray(src.convert("RGB")).astype(int)
+    m = np.zeros(rgb.shape[:2], np.uint8)
+    cv2.ellipse(m, (cx, cy), (int(half * .8), int(lh * .8)), 0, 0, 360, 1, -1)
+    lip = (m > 0) & (np.abs(rgb - skin_rgb).max(-1) > 45) & (rgb.sum(-1) > 90)  # not skin, not the black outline
+    c = np.median(rgb[lip], 0).round().astype(int) if lip.any() else np.array(skin_rgb)
+    return (cx, cy), 2 * half, lh, "#%02x%02x%02x" % tuple(c)
+
+
+def guide_map(src, mask_path, v, centre, lw, lh):
+    """Edge map of the face with the mouth erased and the target mouth outline drawn in."""
+    import numpy as np, cv2
+    rgb = np.asarray(src.convert("RGB"))
+    edges = cv2.Canny(cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY), 100, 200)
+    m = np.asarray(Image.open(mask_path).getchannel("A")) == 0
+    edges[m] = 0
+    cx, cy = centre  # the smile line runs past the mask; erase its ends too, or Flux joins them across the new mouth
+    edges[max(0, cy - lh):cy + lh, max(0, cx - lw):cx + lw] = 0
+    if v == "mouth_o":
+        cv2.ellipse(edges, centre, (int(lw * .28), int(lw * .30)), 0, 0, 360, 255, 2)
+        cv2.ellipse(edges, centre, (int(lw * .15), int(lw * .18)), 0, 0, 360, 255, 2)
+    elif v == "mouth_a_half":
+        cv2.ellipse(edges, centre, (int(lw * .45), int(lw * .20)), 0, 0, 360, 255, 2)
+        cv2.ellipse(edges, centre, (int(lw * .30), int(lw * .06)), 0, 0, 360, 255, 2)
+    else:
+        raise SystemExit(f"{v}: no shape guide drawn for this variant")
+    return Image.fromarray(edges).convert("RGB")
 
 
 def match_tint(src, edit, mask_path, skin_rgb, band=6, tol=40):
@@ -204,12 +256,20 @@ def main():
         # Per-character eye look (e.g. unusual irises) for the open-eye variants only: EYES_EXTRA="...".
         if v not in overrides and v.startswith("eyes_") and v != "eyes_closed" and os.environ.get("EYES_EXTRA"):
             text += " " + os.environ["EYES_EXTRA"]
+        guide_name = None
+        if v in GUIDED:
+            centre, lw, lh, lip_hex = lips_box(proj, source, skin_rgb)
+            (proj / "work" / "guides").mkdir(parents=True, exist_ok=True)
+            guide_map(source, req / "mask.png", v, centre, lw, lh).save(proj / "work" / "guides" / f"{v}.png")
+            guide_name = upload(proj / "work" / "guides" / f"{v}.png", f"{proj.name}-{v}-guide.png")
+            text = f"refcontrol {text} The lips are color {lip_hex}."
         tries = []
         (proj / "work" / "tries").mkdir(parents=True, exist_ok=True)
         for f in (proj / "work" / "tries").glob(f"{v}-*.png"):
             f.unlink()  # a rerun replaces this variant's tries, so no stale try survives with a lower count
         for t in range(tries_n):
-            rgb = Image.open(io.BytesIO(run(workflow(src_name, mask_name, text, *source.size, seed0 + 100 * i + t)))).convert("RGB")
+            wf = workflow(src_name, mask_name, text, *source.size, seed0 + 100 * i + t)
+            rgb = Image.open(io.BytesIO(run(guided(wf, guide_name) if guide_name else wf))).convert("RGB")
             rgb.putalpha(source.getchannel("A"))  # Comfy drops alpha; the source's alpha is the right one
             rgb, delta = match_tint(source, rgb, req / "mask.png", skin_rgb)
             if abs(delta).max() > 3:
@@ -217,7 +277,7 @@ def main():
             tries.append(rgb)
             (proj / "work" / "tries").mkdir(exist_ok=True)
             rgb.save(proj / "work" / "tries" / f"{v}-{t + 1}.png")
-        print(f"{v}: {tries_n} tries, skin {hexc}, sheet {sheet(proj, v, source, req / 'mask.png', tries)}", flush=True)
+        print(f"{v}: {tries_n} tries{', shape guide' if guide_name else ''}, skin {hexc}, sheet {sheet(proj, v, source, req / 'mask.png', tries)}", flush=True)
     print(f"pick: {sys.argv[0]} {proj} --pick " + " ".join(f"{v}=N" for v in names))
 
 if __name__ == "__main__":
