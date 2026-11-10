@@ -54,7 +54,8 @@ def instruction(prompt_md: str) -> str:
     for up, ours in REWRITE.items():
         text = text.replace(up, ours)
     if "mouth" in text.lower() or "lips" in text.lower():
-        text += " Keep the lips exactly as full or thin as in the reference, bare and natural, same colour and shading."
+        text += (" Keep the mouth exactly as wide as in the reference, its corners where they are, and the lips exactly"
+                 " as full or thin, bare and natural, same colour and shading; only the opening changes.")
     return text + " Match the reference image exactly in iris colour, lip colour, line weight and shading; add nothing it does not have."
 
 
