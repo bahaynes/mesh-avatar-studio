@@ -1,12 +1,12 @@
-"""Draw mesh-avatar variants on a Flux.2 Klein ComfyUI: masked edit of source.png, pasted back over the source.
+"""Draw mesh-avatar variants with Qwen-Image-Edit on ComfyUI: masked edit of source.png, pasted back over the source.
 
 usage (or the /__picker page in Studio): uv run --with pillow --with numpy --with opencv-python-headless homeserver/comfy-variants.py projects/<name> [variant ...]
        ... comfy-variants.py projects/<name> --pick mouth_a=2 eyes_sad=1 ...
 Reads projects/<name>/variant-requests/<v>/{mask.png,prompt.md}; writes every try to work/tries/<v>-<n>.png and a
 contact sheet (original + tries) to work/sheet-<v>.png. It picks nothing: a person picks with --pick, which copies
 the chosen try to variants/<v>.png.
-ponytail: one-off tool for this machine's ComfyUI (COMFY env, default 10.10.10.114:8188); node names are
-the Klein stack from the Marinara FluxEdit connection. Upgrade path: tools/ if it proves general.
+ponytail: one-off tool for this machine's ComfyUI (COMFY env, default 10.10.10.114:8188); the model is
+the Qwen Rapid AIO checkpoint (CKPT env). Upgrade path: tools/ if it proves general.
 """
 import io, json, os, sys, time, urllib.request, uuid
 from pathlib import Path
@@ -16,12 +16,13 @@ COMFY = os.environ.get("COMFY", "http://10.10.10.114:8188")
 DEFAULT = ["eyes_closed", "eyes_half", "eyes_smile", "eyes_sad", "eyes_surprise", "mouth_a", "mouth_a_half", "mouth_i", "mouth_o", "mouth_angry", "mouth_sad"]
 # A partial set breaks mesh-avatar runtimes before 0.3.1 (Marinara bundled 0.2.1), so default to all.
 
+# Qwen-Image-Edit (Rapid AIO) does the edits: Flux Klein copied its reference back for small changes (oh, half-ah,
+# even with the reference mouth blanked), and an edge-map guide made it trace the guide. Klein still draws the base
+# portrait (restyle.py). Without style words the edit falls back to soft glossy rendering, so name the drawing style.
+CKPT = os.environ.get("CKPT", "Qwen-Rapid-AIO-NSFW-v23.safetensors")
+EDIT_STYLE = os.environ.get("EDIT_STYLE", "Clean black ink outlines, flat cel colour, comic illustration.")
 
-# Shape-guided variants: Flux Klein copies its reference back for small mouth changes (oh, half-ah), so for
-# these the reference is an edge map with the target outline drawn by code, plus the RefControl canny LoRA.
-# ponytail: two hand-tuned outlines sized from the detected lips. Upgrade path: more shapes, per-character tuning.
-GUIDED = [g for g in os.environ.get("GUIDE", "mouth_o,mouth_a_half").split(",") if g]
-GUIDE_LORA = os.environ.get("GUIDE_LORA", "flux2_klein_9b_refcontrol_canny.safetensors")
+
 
 
 def post(path, data, ctype):
@@ -64,46 +65,29 @@ def instruction(prompt_md: str, name: str = "") -> str:
     for up, ours in REWRITE.items():
         text = text.replace(up, ours)
     if name.startswith("mouth"):
-        text += " Keep the lips exactly as full or thin, same colour and shading." if os.environ.get("STYLE") else " Keep the lips exactly as full or thin, bare and natural, same colour and shading."
-    if os.environ.get("STYLE"):  # generic drawing-style line, e.g. "Clean black ink outlines, flat cel colour."
-        text += " " + os.environ["STYLE"]
+        text += " Keep the lips exactly as full or thin, same colour and shading."
+    if EDIT_STYLE:
+        text += " " + EDIT_STYLE
     return text
 
 
 def workflow(src, mask, text, w, h, seed):
+    def enc(prompt):  # the edit model sees the whole source picture through the text encoder
+        return {"class_type": "TextEncodeQwenImageEditPlus", "inputs": {"clip": ["ck", 1], "vae": ["ck", 2], "image1": ["src", 0], "prompt": prompt}}
     return {
-        "unet": {"class_type": "UnetLoaderGGUF", "inputs": {"unet_name": os.environ.get("UNET", "flux-2-klein-9b-Q4_K_M.gguf")}},
-        "clip": {"class_type": "CLIPLoaderGGUF", "inputs": {"clip_name": os.environ.get("CLIP_GGUF", "Qwen3-8B-Q4_K_M.gguf"), "type": "flux2"}},
-        "vae": {"class_type": "VAELoader", "inputs": {"vae_name": "full_encoder_small_decoder.safetensors"}},
+        "ck": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": CKPT}},
         "src": {"class_type": "LoadImage", "inputs": {"image": src}},
         "mask": {"class_type": "LoadImage", "inputs": {"image": mask}},  # MASK out = 1 where transparent = editable
-        "enc": {"class_type": "VAEEncode", "inputs": {"pixels": ["src", 0], "vae": ["vae", 0]}},
+        "pos": enc(text),
+        "neg": enc(""),
+        "enc": {"class_type": "VAEEncode", "inputs": {"pixels": ["src", 0], "vae": ["ck", 2]}},
         "noisemask": {"class_type": "SetLatentNoiseMask", "inputs": {"samples": ["enc", 0], "mask": ["mask", 1]}},
-        "pos": {"class_type": "CLIPTextEncode", "inputs": {"text": text, "clip": ["clip", 0]}},
-        "ref": {"class_type": "ReferenceLatent", "inputs": {"conditioning": ["pos", 0], "latent": ["enc", 0]}},
-        "neg": {"class_type": "ConditioningZeroOut", "inputs": {"conditioning": ["pos", 0]}},
-        "guider": {"class_type": "CFGGuider", "inputs": {"cfg": 1, "model": ["unet", 0], "positive": ["ref", 0], "negative": ["neg", 0]}},
-        "sched": {"class_type": "Flux2Scheduler", "inputs": {"steps": 4, "width": w, "height": h}},
-        "sampler": {"class_type": "KSamplerSelect", "inputs": {"sampler_name": "euler"}},
-        "noise": {"class_type": "RandomNoise", "inputs": {"noise_seed": seed}},
-        "sample": {"class_type": "SamplerCustomAdvanced", "inputs": {"noise": ["noise", 0], "guider": ["guider", 0], "sampler": ["sampler", 0], "sigmas": ["sched", 0], "latent_image": ["noisemask", 0]}},
-        "dec": {"class_type": "VAEDecode", "inputs": {"samples": ["sample", 0], "vae": ["vae", 0]}},
+        "sample": {"class_type": "KSampler", "inputs": {"model": ["ck", 0], "positive": ["pos", 0], "negative": ["neg", 0], "latent_image": ["noisemask", 0],
+                   "seed": seed, "steps": int(os.environ.get("STEPS", 4)), "cfg": 1.0, "sampler_name": "euler_ancestral", "scheduler": "beta", "denoise": 1.0}},
+        "dec": {"class_type": "VAEDecode", "inputs": {"samples": ["sample", 0], "vae": ["ck", 2]}},
         "paste": {"class_type": "ImageCompositeMasked", "inputs": {"destination": ["src", 0], "source": ["dec", 0], "x": 0, "y": 0, "resize_source": False, "mask": ["mask", 1]}},
         "save": {"class_type": "SaveImage", "inputs": {"images": ["paste", 0], "filename_prefix": "meshvariant"}},
     }
-
-
-def guided(wf, guide_name):
-    """Swap the character reference for the edge-map reference, through the RefControl LoRA."""
-    wf["lora"] = {"class_type": "LoraLoaderModelOnly", "inputs": {"model": ["unet", 0], "lora_name": GUIDE_LORA, "strength_model": float(os.environ.get("GUIDE_STRENGTH", 1.0))}}
-    wf["guider"]["inputs"]["model"] = ["lora", 0]
-    if os.environ.get("STYLE_LORA"):  # optional style LoRA stacked on the guide LoRA
-        wf["slora"] = {"class_type": "LoraLoaderModelOnly", "inputs": {"model": ["lora", 0], "lora_name": os.environ["STYLE_LORA"], "strength_model": float(os.environ.get("STYLE_LORA_STRENGTH", 1.0))}}
-        wf["guider"]["inputs"]["model"] = ["slora", 0]
-    wf["guide"] = {"class_type": "LoadImage", "inputs": {"image": guide_name}}
-    wf["genc"] = {"class_type": "VAEEncode", "inputs": {"pixels": ["guide", 0], "vae": ["vae", 0]}}
-    wf["ref"]["inputs"]["latent"] = ["genc", 0]
-    return wf
 
 
 def run(wf) -> bytes:
@@ -134,41 +118,6 @@ def skin_hex(src, mask_path, ring=16):
     sel = sel[lum >= np.median(lum)]  # drop outlines and shadow; keep the skin's lit tone
     c = np.median(sel, 0).round().astype(int)
     return "#%02x%02x%02x" % tuple(c), c
-
-
-def lips_box(proj, src, skin_rgb):
-    """Mouth centre and size from the rig (Qwen draft, fixed by hand in Studio); lip colour sampled there."""
-    import numpy as np, cv2
-    rig = json.loads((proj / "rig.json").read_text()) if (proj / "rig.json").exists() else json.loads((proj / "rig.draft.json").read_text())
-    mo = rig["mouth"]
-    cx, cy, half = round(mo["cx"]), round(mo["cy"]), round(mo["halfLen"])
-    lh = max(12, round(mo["area"]["ry"] * .5))
-    rgb = np.asarray(src.convert("RGB")).astype(int)
-    m = np.zeros(rgb.shape[:2], np.uint8)
-    cv2.ellipse(m, (cx, cy), (int(half * .8), int(lh * .8)), 0, 0, 360, 1, -1)
-    lip = (m > 0) & (np.abs(rgb - skin_rgb).max(-1) > 45) & (rgb.sum(-1) > 90)  # not skin, not the black outline
-    c = np.median(rgb[lip], 0).round().astype(int) if lip.any() else np.array(skin_rgb)
-    return (cx, cy), 2 * half, lh, "#%02x%02x%02x" % tuple(c)
-
-
-def guide_map(src, mask_path, v, centre, lw, lh):
-    """Edge map of the face with the mouth erased and the target mouth outline drawn in."""
-    import numpy as np, cv2
-    rgb = np.asarray(src.convert("RGB"))
-    edges = cv2.Canny(cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY), 100, 200)
-    m = np.asarray(Image.open(mask_path).getchannel("A")) == 0
-    edges[m] = 0
-    cx, cy = centre  # the smile line runs past the mask; erase its ends too, or Flux joins them across the new mouth
-    edges[max(0, cy - lh):cy + lh, max(0, cx - lw):cx + lw] = 0
-    if v == "mouth_o":
-        cv2.ellipse(edges, centre, (int(lw * .28), int(lw * .30)), 0, 0, 360, 255, 2)
-        cv2.ellipse(edges, centre, (int(lw * .15), int(lw * .18)), 0, 0, 360, 255, 2)
-    elif v == "mouth_a_half":
-        cv2.ellipse(edges, centre, (int(lw * .45), int(lw * .20)), 0, 0, 360, 255, 2)
-        cv2.ellipse(edges, centre, (int(lw * .30), int(lw * .06)), 0, 0, 360, 255, 2)
-    else:
-        raise SystemExit(f"{v}: no shape guide drawn for this variant")
-    return Image.fromarray(edges).convert("RGB")
 
 
 def match_tint(src, edit, mask_path, skin_rgb, band=6, tol=40):
@@ -261,20 +210,13 @@ def main():
         # Per-character eye look (e.g. unusual irises) for the open-eye variants only: EYES_EXTRA="...".
         if v not in overrides and v.startswith("eyes_") and v != "eyes_closed" and os.environ.get("EYES_EXTRA"):
             text += " " + os.environ["EYES_EXTRA"]
-        guide_name = None
-        if v in GUIDED:
-            centre, lw, lh, lip_hex = lips_box(proj, source, skin_rgb)
-            (proj / "work" / "guides").mkdir(parents=True, exist_ok=True)
-            guide_map(source, req / "mask.png", v, centre, lw, lh).save(proj / "work" / "guides" / f"{v}.png")
-            guide_name = upload(proj / "work" / "guides" / f"{v}.png", f"{proj.name}-{v}-guide.png")
-            text = f"refcontrol {text} The lips are color {lip_hex}."
         tries = []
         (proj / "work" / "tries").mkdir(parents=True, exist_ok=True)
         for f in (proj / "work" / "tries").glob(f"{v}-*.png"):
             f.unlink()  # a rerun replaces this variant's tries, so no stale try survives with a lower count
         for t in range(tries_n):
             wf = workflow(src_name, mask_name, text, *source.size, seed0 + 100 * i + t)
-            rgb = Image.open(io.BytesIO(run(guided(wf, guide_name) if guide_name else wf))).convert("RGB")
+            rgb = Image.open(io.BytesIO(run(wf))).convert("RGB")
             rgb.putalpha(source.getchannel("A"))  # Comfy drops alpha; the source's alpha is the right one
             rgb, delta = match_tint(source, rgb, req / "mask.png", skin_rgb)
             if abs(delta).max() > 3:
@@ -282,7 +224,7 @@ def main():
             tries.append(rgb)
             (proj / "work" / "tries").mkdir(exist_ok=True)
             rgb.save(proj / "work" / "tries" / f"{v}-{t + 1}.png")
-        print(f"{v}: {tries_n} tries{', shape guide' if guide_name else ''}, skin {hexc}, sheet {sheet(proj, v, source, req / 'mask.png', tries)}", flush=True)
+        print(f"{v}: {tries_n} tries, skin {hexc}, sheet {sheet(proj, v, source, req / 'mask.png', tries)}", flush=True)
     print(f"pick: {sys.argv[0]} {proj} --pick " + " ".join(f"{v}=N" for v in names))
 
 if __name__ == "__main__":
