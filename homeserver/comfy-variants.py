@@ -42,11 +42,16 @@ REWRITE = {
     "Open the mouth in the Japanese vowel あ (a): a natural vertically open mouth, with a subtle tongue and upper teeth.":
         "Open the mouth naturally as when saying 'ah': opened vertically, with a little of the tongue and upper teeth showing.",
     "Draw the Japanese vowel あ (a) at half openness: a smaller, gently open mouth.":
-        "Part the lips slightly, as when starting to say 'ah': a small gap between them.",
+        "Part the lips only slightly, as when starting to say 'ah': a narrow dark gap between them, much smaller than a full 'ah'.",
     "Draw the Japanese vowel い (i): a wide, narrow open smile with subtle upper teeth.":
         "Spread the lips wide and only slightly open, as when saying 'ee', with a little of the upper teeth showing and the mouth corners level.",
     "Draw the Japanese vowel お (o): a small rounded open mouth.":
         "Round the lips into a small open O, as when saying 'oh'.",
+    "Draw both eyes closed in a gentle smiling upward arc,":
+        "Draw both eyes closed as happy smiling eyes: each closed lid curves upward in an arch, like an upside-down U, the cheeks lifted slightly beneath,",
+    "a tight, closed mouth with the corners turned down into a firm frown (an upside-down V), slightly shorter than the original.":
+        "the lips pressed together hard into a thin, tight, flat line, the corners pulled sharply down.",
+    "a small closed mouth with the corners drooping downward": "a small closed mouth with the lower lip pushed out in a slight pout and the corners drooping downward",
     ", softer and slightly moist,": ",",
     ", slightly smaller irises with clear highlights,": ", the irises unchanged in size and colour,",
     " in a gentle, soft curve, slightly wavering.": " in a gentle, soft curve.",
@@ -65,7 +70,7 @@ def instruction(prompt_md: str, name: str = "") -> str:
     for up, ours in REWRITE.items():
         text = text.replace(up, ours)
     if name.startswith("mouth"):
-        text += " Keep the lips exactly as full or thin, same colour and shading."
+        text += " Keep the mouth as wide as the original, and the lips exactly as full or thin, same colour and shading. Draw its outline the way the original mouth is drawn."
     if EDIT_STYLE:
         text += " " + EDIT_STYLE
     return text
